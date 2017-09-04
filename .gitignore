@@ -22,3 +22,4 @@ bin/
 *.tlog
 build
 .cache
+3rdparty/ippicv/downloads/
