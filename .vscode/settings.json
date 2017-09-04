@@ -8,7 +8,7 @@
         "CMAKE_C_COMPILER":"/usr/bin/gcc-5",
         "CMAKE_CXX_COMPILER":"/usr/bin/g++-5",
         "CMAKE_EXPORT_COMPILE_COMMANDS":"ON",
-        "BUILD_EXAMPLES":"ON",
+        "BUILD_EXAMPLES":"OFF",
         "INSTALL_C_EXAMPLES":"ON",
         "INSTALL_PYTHON_EXAMPLES":"ON",
         "OPENCV_EXTRA_MODULES_PATH":"${workspaceRoot}/opencv_contrib/modules/",
