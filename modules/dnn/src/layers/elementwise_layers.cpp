@@ -41,9 +41,12 @@
 //M*/
 
 #include "../precomp.hpp"
+#include "layers_common.hpp"
 #include "op_halide.hpp"
 #include "opencv2/imgproc.hpp"
 #include <opencv2/dnn/shape_utils.hpp>
+#include "opencl_kernels_dnn.hpp"
+#include <iostream>
 
 namespace cv
 {
@@ -158,6 +161,10 @@ public:
     {
         CV_TRACE_FUNCTION();
 
+        CV_OCL_RUN((this->preferableTarget == DNN_TARGET_OPENCL) &&
+                   OCL_PERFORMANCE_CHECK(ocl::Device::getDefault().isIntel()),
+                   func.applyOCL(inputs, outputs, internals))
+
         for (size_t i = 0; i < inputs.size(); i++)
         {
             const Mat &src = *inputs[i];
@@ -190,6 +197,13 @@ public:
     Func func;
     bool run_parallel;
 };
+
+#ifdef HAVE_OPENCL
+static String oclGetTMacro(const UMat &m)
+{
+    return String("-DT=") + ocl::typeToStr(m.type()) + String(" ");
+}
+#endif
 
 struct ReLUFunctor
 {
@@ -230,6 +244,46 @@ struct ReLUFunctor
         }
     }
 
+#ifdef HAVE_OPENCL
+    bool initKernel(ocl::Kernel &ker, const UMat &src) const
+    {
+        const char *buildoptSlope = (slope == 0) ? "-DRELU_NO_SLOPE" : "";
+        String buildopt = oclGetTMacro(src) + buildoptSlope;
+
+        if (!ker.create("ReLUForward", ocl::dnn::activations_oclsrc, buildopt))
+            return false;
+
+        if (slope != 0)
+            ker.set(3, (float)slope);
+
+        return true;
+    }
+
+    bool applyOCL(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals)
+    {
+        size_t wgSize = ocl::Device::getDefault().maxWorkGroupSize();
+
+        for (size_t i = 0; i < inputs.size(); i++)
+        {
+            UMat src, dst;
+            inputs[i]->copyTo(src);
+            dst = outputs[i].getUMat(ACCESS_WRITE);
+            CV_Assert(src.isContinuous() && dst.isContinuous() && !src.offset && !dst.offset);
+
+            ocl::Kernel ker;
+            CV_Assert(initKernel(ker, src));
+            ker.set(0, (int)src.total());
+            ker.set(1, ocl::KernelArg::PtrReadOnly(src));
+            ker.set(2, ocl::KernelArg::PtrWriteOnly(dst));
+
+            size_t gSize = src.total();
+            CV_Assert(ker.run(1, &gSize, &wgSize, false));
+        }
+
+        return true;
+    }
+#endif
+
 #ifdef HAVE_HALIDE
     void attachHalide(const Halide::Expr& input, Halide::Func& top)
     {
@@ -248,6 +302,70 @@ struct ReLUFunctor
     int64 getFLOPSPerElement() const { return 1; }
 };
 
+struct ReLU6Functor
+{
+    typedef ReLU6Layer Layer;
+    float minValue, maxValue;
+
+    ReLU6Functor(float minValue_ = 0.0f, float maxValue_ = 6.0f)
+        : minValue(minValue_), maxValue(maxValue_)
+    {
+        CV_Assert(minValue <= maxValue);
+    }
+
+    void apply(const float* srcptr, float* dstptr, int len, size_t planeSize, int cn0, int cn1) const
+    {
+        for( int cn = cn0; cn < cn1; cn++, srcptr += planeSize, dstptr += planeSize )
+        {
+            int i = 0;
+#if CV_SIMD128
+            v_float32x4 minV = v_setall_f32(minValue), maxV = v_setall_f32(maxValue);
+            for( ; i <= len - 16; i += 16 )
+            {
+                v_float32x4 x0 = v_load(srcptr + i);
+                v_float32x4 x1 = v_load(srcptr + i + 4);
+                v_float32x4 x2 = v_load(srcptr + i + 8);
+                v_float32x4 x3 = v_load(srcptr + i + 12);
+                x0 = v_min(v_max(minV, x0), maxV);
+                x1 = v_min(v_max(minV, x1), maxV);
+                x2 = v_min(v_max(minV, x2), maxV);
+                x3 = v_min(v_max(minV, x3), maxV);
+                v_store(dstptr + i, x0);
+                v_store(dstptr + i + 4, x1);
+                v_store(dstptr + i + 8, x2);
+                v_store(dstptr + i + 12, x3);
+            }
+#endif
+            for( ; i < len; i++ )
+            {
+                float x = srcptr[i];
+                if (x >= minValue)
+                    dstptr[i] = x <= maxValue ? x : maxValue;
+                else
+                    dstptr[i] = minValue;
+            }
+        }
+    }
+
+#ifdef HAVE_OPENCL
+    bool applyOCL(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals)
+    {
+        // TODO: implement OCL version
+        return false;
+    }
+#endif
+
+#ifdef HAVE_HALIDE
+    void attachHalide(const Halide::Expr& input, Halide::Func& top)
+    {
+        Halide::Var x("x"), y("y"), c("c"), n("n");
+        top(x, y, c, n) = clamp(input, minValue, maxValue);
+    }
+#endif  // HAVE_HALIDE
+
+    int64 getFLOPSPerElement() const { return 2; }
+};
+
 struct TanHFunctor
 {
     typedef TanHLayer Layer;
@@ -263,6 +381,14 @@ struct TanHFunctor
             }
         }
     }
+
+#ifdef HAVE_OPENCL
+    bool applyOCL(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals)
+    {
+        // TODO: implement OCL version
+        return false;
+    }
+#endif
 
 #ifdef HAVE_HALIDE
     void attachHalide(const Halide::Expr& input, Halide::Func& top)
@@ -290,6 +416,14 @@ struct SigmoidFunctor
             }
         }
     }
+
+#ifdef HAVE_OPENCL
+    bool applyOCL(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals)
+    {
+        // TODO: implement OCL version
+        return false;
+    }
+#endif
 
 #ifdef HAVE_HALIDE
     void attachHalide(const Halide::Expr& input, Halide::Func& top)
@@ -320,6 +454,14 @@ struct ELUFunctor
         }
     }
 
+#ifdef HAVE_OPENCL
+    bool applyOCL(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals)
+    {
+        // TODO: implement OCL version
+        return false;
+    }
+#endif
+
 #ifdef HAVE_HALIDE
     void attachHalide(const Halide::Expr& input, Halide::Func& top)
     {
@@ -347,6 +489,14 @@ struct AbsValFunctor
         }
     }
 
+#ifdef HAVE_OPENCL
+    bool applyOCL(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals)
+    {
+        // TODO: implement OCL version
+        return false;
+    }
+#endif
+
 #ifdef HAVE_HALIDE
     void attachHalide(const Halide::Expr& input, Halide::Func& top)
     {
@@ -373,6 +523,14 @@ struct BNLLFunctor
             }
         }
     }
+
+#ifdef HAVE_OPENCL
+    bool applyOCL(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals)
+    {
+        // TODO: implement OCL version
+        return false;
+    }
+#endif
 
 #ifdef HAVE_HALIDE
     void attachHalide(const Halide::Expr& input, Halide::Func& top)
@@ -423,6 +581,14 @@ struct PowerFunctor
         }
     }
 
+#ifdef HAVE_OPENCL
+    bool applyOCL(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals)
+    {
+        // TODO: implement OCL version
+        return false;
+    }
+#endif
+
 #ifdef HAVE_HALIDE
     void attachHalide(const Halide::Expr& input, Halide::Func& top)
     {
@@ -468,18 +634,18 @@ struct ChannelsPReLUFunctor
             v_float32x4 s4 = v_setall_f32(s), z = v_setzero_f32();
             for( ; i <= len - 16; i += 16 )
             {
-                v_float32x4 x0 = v_load(ptr + i);
-                v_float32x4 x1 = v_load(ptr + i + 4);
-                v_float32x4 x2 = v_load(ptr + i + 8);
-                v_float32x4 x3 = v_load(ptr + i + 12);
+                v_float32x4 x0 = v_load(srcptr + i);
+                v_float32x4 x1 = v_load(srcptr + i + 4);
+                v_float32x4 x2 = v_load(srcptr + i + 8);
+                v_float32x4 x3 = v_load(srcptr + i + 12);
                 x0 = v_select(x0 >= z, x0, x0*s4);
                 x1 = v_select(x1 >= z, x1, x1*s4);
                 x2 = v_select(x2 >= z, x2, x2*s4);
                 x3 = v_select(x3 >= z, x3, x3*s4);
-                v_store(ptr + i, x0);
-                v_store(ptr + i + 4, x1);
-                v_store(ptr + i + 8, x2);
-                v_store(ptr + i + 12, x3);
+                v_store(dstptr + i, x0);
+                v_store(dstptr + i + 4, x1);
+                v_store(dstptr + i + 8, x2);
+                v_store(dstptr + i + 12, x3);
             }
         #endif
             for( ; i < len; i++ )
@@ -489,6 +655,14 @@ struct ChannelsPReLUFunctor
             }
         }
     }
+
+#ifdef HAVE_OPENCL
+    bool applyOCL(std::vector<Mat*> &inputs, std::vector<Mat> &outputs, std::vector<Mat> &internals)
+    {
+        // TODO: implement OCL version
+        return false;
+    }
+#endif
 
 #ifdef HAVE_HALIDE
     void attachHalide(const Halide::Expr& input, Halide::Func& top)
@@ -514,6 +688,15 @@ Ptr<ReLULayer> ReLULayer::create(const LayerParams& params)
     l->setParamsFrom(params);
     l->negativeSlope = negativeSlope;
 
+    return l;
+}
+
+Ptr<ReLU6Layer> ReLU6Layer::create(const LayerParams& params)
+{
+    float minValue = params.get<float>("min_value", 0.0f);
+    float maxValue = params.get<float>("max_value", 6.0f);
+    Ptr<ReLU6Layer> l(new ElementWiseLayer<ReLU6Functor>(ReLU6Functor(minValue, maxValue)));
+    l->setParamsFrom(params);
     return l;
 }
 
@@ -571,8 +754,15 @@ Ptr<PowerLayer> PowerLayer::create(const LayerParams& params)
     return l;
 }
 
-Ptr<ChannelsPReLULayer> ChannelsPReLULayer::create(const LayerParams& params)
+Ptr<Layer> ChannelsPReLULayer::create(const LayerParams& params)
 {
+    CV_Assert(params.blobs.size() == 1);
+    if (params.blobs[0].total() == 1)
+    {
+        LayerParams reluParams = params;
+        reluParams.set("negative_slope", params.blobs[0].at<float>(0));
+        return ReLULayer::create(reluParams);
+    }
     Ptr<ChannelsPReLULayer> l(new ElementWiseLayer<ChannelsPReLUFunctor>(ChannelsPReLUFunctor(params.blobs[0])));
     l->setParamsFrom(params);
 
