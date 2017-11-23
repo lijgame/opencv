@@ -1,10 +1,5 @@
 {
-  "variant": {
-    "label": "Release",
-    "keywordSettings": {
-      "buildType": "release"
-    },
-    "description": "Enable optimizations, omit debug info"
-  },
-  "activeEnvironments": []
+  "variant": null,
+  "activeEnvironments": [],
+  "codeModel": null
 }

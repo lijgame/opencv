@@ -24,3 +24,4 @@ bin/
 build
 .cache
 3rdparty/ippicv/downloads/
+.vscode/.cmaketools.json
