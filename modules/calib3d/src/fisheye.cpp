@@ -126,7 +126,8 @@ void cv::fisheye::projectPoints(InputArray objectPoints, OutputArray imagePoints
     {
         Vec3d Xi = objectPoints.depth() == CV_32F ? (Vec3d)Xf[i] : Xd[i];
         Vec3d Y = aff*Xi;
-
+        if (fabs(Y[2]) < DBL_MIN)
+            Y[2] = 1;
         Vec2d x(Y[0]/Y[2], Y[1]/Y[2]);
 
         double r2 = x.dot(x);
@@ -388,10 +389,18 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
         {
             // compensate distortion iteratively
             double theta = theta_d;
-            for(int j = 0; j < 10; j++ )
+
+            const double EPS = 1e-8; // or std::numeric_limits<double>::epsilon();
+            for (int j = 0; j < 10; j++)
             {
                 double theta2 = theta*theta, theta4 = theta2*theta2, theta6 = theta4*theta2, theta8 = theta6*theta2;
-                theta = theta_d / (1 + k[0] * theta2 + k[1] * theta4 + k[2] * theta6 + k[3] * theta8);
+                double k0_theta2 = k[0] * theta2, k1_theta4 = k[1] * theta4, k2_theta6 = k[2] * theta6, k3_theta8 = k[3] * theta8;
+                /* new_theta = theta - theta_fix, theta_fix = f0(theta) / f0'(theta) */
+                double theta_fix = (theta * (1 + k0_theta2 + k1_theta4 + k2_theta6 + k3_theta8) - theta_d) /
+                                   (1 + 3*k0_theta2 + 5*k1_theta4 + 7*k2_theta6 + 9*k3_theta8);
+                theta = theta - theta_fix;
+                if (fabs(theta_fix) < EPS)
+                    break;
             }
 
             scale = std::tan(theta) / theta_d;
@@ -547,16 +556,12 @@ void cv::fisheye::estimateNewCameraMatrixForUndistortRectify(InputArray K, Input
     int w = image_size.width, h = image_size.height;
     balance = std::min(std::max(balance, 0.0), 1.0);
 
-    cv::Mat points(1, 8, CV_64FC2);
+    cv::Mat points(1, 4, CV_64FC2);
     Vec2d* pptr = points.ptr<Vec2d>();
-    pptr[0] = Vec2d(0, 0);
-    pptr[1] = Vec2d(w/2, 0);
-    pptr[2] = Vec2d(w, 0);
-    pptr[3] = Vec2d(w, h/2);
-    pptr[4] = Vec2d(w, h);
-    pptr[5] = Vec2d(w/2, h);
-    pptr[6] = Vec2d(0, h);
-    pptr[7] = Vec2d(0, h/2);
+    pptr[0] = Vec2d(w/2, 0);
+    pptr[1] = Vec2d(w, h/2);
+    pptr[2] = Vec2d(w/2, h);
+    pptr[3] = Vec2d(0, h/2);
 
     fisheye::undistortPoints(points, points, K, D, R);
     cv::Scalar center_mass = mean(points);
@@ -573,23 +578,19 @@ void cv::fisheye::estimateNewCameraMatrixForUndistortRectify(InputArray K, Input
     double minx = DBL_MAX, miny = DBL_MAX, maxx = -DBL_MAX, maxy = -DBL_MAX;
     for(size_t i = 0; i < points.total(); ++i)
     {
-        if(i!=1 && i!=5){
-            minx = std::min(minx, std::abs(pptr[i][0]-cn[0]));
-        }
-        if(i!=3 && i!=7){
-            miny = std::min(miny, std::abs(pptr[i][1]-cn[1]));
-        }
-        maxy = std::max(maxy, std::abs(pptr[i][1]-cn[1]));
-        maxx = std::max(maxx, std::abs(pptr[i][0]-cn[0]));
+        miny = std::min(miny, pptr[i][1]);
+        maxy = std::max(maxy, pptr[i][1]);
+        minx = std::min(minx, pptr[i][0]);
+        maxx = std::max(maxx, pptr[i][0]);
     }
 
-    double f1 = w * 0.5/(minx);
-    double f2 = w * 0.5/(maxx);
-    double f3 = h * 0.5 * aspect_ratio/(miny);
-    double f4 = h * 0.5 * aspect_ratio/(maxy);
+    double f1 = w * 0.5/(cn[0] - minx);
+    double f2 = w * 0.5/(maxx - cn[0]);
+    double f3 = h * 0.5 * aspect_ratio/(cn[1] - miny);
+    double f4 = h * 0.5 * aspect_ratio/(maxy - cn[1]);
 
-    double fmax = std::max(f1, f3);
-    double fmin = std::min(f2, f4);
+    double fmin = std::min(f1, std::min(f2, std::min(f3, f4)));
+    double fmax = std::max(f1, std::max(f2, std::max(f3, f4)));
 
     double f = balance * fmin + (1.0 - balance) * fmax;
     f *= fov_scale > 0 ? 1.0/fov_scale : 1.0;
@@ -770,7 +771,7 @@ double cv::fisheye::calibrate(InputArrayOfArrays objectPoints, InputArrayOfArray
 
 
     //-------------------------------Optimization
-    for(int iter = 0; iter <= std::numeric_limits<int>::max(); ++iter)
+    for(int iter = 0; iter < std::numeric_limits<int>::max(); ++iter)
     {
         if ((criteria.type == 1 && iter >= criteria.maxCount)  ||
             (criteria.type == 2 && change <= criteria.epsilon) ||
@@ -1128,8 +1129,8 @@ cv::internal::IntrinsicParams cv::internal::IntrinsicParams::operator+(const Mat
     tmp.f[0]    = this->f[0]    + (isEstimate[0] ? ptr[j++] : 0);
     tmp.f[1]    = this->f[1]    + (isEstimate[1] ? ptr[j++] : 0);
     tmp.c[0]    = this->c[0]    + (isEstimate[2] ? ptr[j++] : 0);
-    tmp.alpha   = this->alpha   + (isEstimate[4] ? ptr[j++] : 0);
     tmp.c[1]    = this->c[1]    + (isEstimate[3] ? ptr[j++] : 0);
+    tmp.alpha   = this->alpha   + (isEstimate[4] ? ptr[j++] : 0);
     tmp.k[0]    = this->k[0]    + (isEstimate[5] ? ptr[j++] : 0);
     tmp.k[1]    = this->k[1]    + (isEstimate[6] ? ptr[j++] : 0);
     tmp.k[2]    = this->k[2]    + (isEstimate[7] ? ptr[j++] : 0);
@@ -1173,7 +1174,7 @@ void cv::internal::projectPoints(cv::InputArray objectPoints, cv::OutputArray im
 {
     CV_INSTRUMENT_REGION()
 
-    CV_Assert(!objectPoints.empty() && objectPoints.type() == CV_64FC3);
+    CV_Assert(!objectPoints.empty() && (objectPoints.type() == CV_32FC3 || objectPoints.type() == CV_64FC3));
     Matx33d K(param.f[0], param.f[0] * param.alpha, param.c[0],
                        0,               param.f[1], param.c[1],
                        0,                        0,         1);
@@ -1186,6 +1187,7 @@ void cv::internal::ComputeExtrinsicRefine(const Mat& imagePoints, const Mat& obj
 {
     CV_Assert(!objectPoints.empty() && objectPoints.type() == CV_64FC3);
     CV_Assert(!imagePoints.empty() && imagePoints.type() == CV_64FC2);
+    CV_Assert(rvec.total() > 2 && tvec.total() > 2);
     Vec6d extrinsics(rvec.at<double>(0), rvec.at<double>(1), rvec.at<double>(2),
                     tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
     double change = 1;
@@ -1365,9 +1367,13 @@ void cv::internal::InitExtrinsics(const Mat& _imagePoints, const Mat& _objectPoi
     double sc = .5 * (norm(H.col(0)) + norm(H.col(1)));
     H = H / sc;
     Mat u1 = H.col(0).clone();
-    u1  = u1 / norm(u1);
+    double norm_u1 = norm(u1);
+    CV_Assert(fabs(norm_u1) > 0);
+    u1  = u1 / norm_u1;
     Mat u2 = H.col(1).clone() - u1.dot(H.col(1).clone()) * u1;
-    u2 = u2 / norm(u2);
+    double norm_u2 = norm(u2);
+    CV_Assert(fabs(norm_u2) > 0);
+    u2 = u2 / norm_u2;
     Mat u3 = u1.cross(u2);
     Mat RRR;
     hconcat(u1, u2, RRR);

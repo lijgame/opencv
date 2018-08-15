@@ -12,17 +12,19 @@ else:
 
 ignored_arg_types = ["RNG*"]
 
+pass_by_val_types = ["Point*", "Point2f*", "Rect*", "String*", "double*", "float*", "int*"]
+
 gen_template_check_self = Template("""    $cname* _self_ = NULL;
     if(PyObject_TypeCheck(self, &pyopencv_${name}_Type))
         _self_ = ${amp}((pyopencv_${name}_t*)self)->v${get};
-    if (_self_ == NULL)
+    if (!_self_)
         return failmsgp("Incorrect type of self (must be '${name}' or its derivative)");
 """)
 
 gen_template_check_self_algo = Template("""    $cname* _self_ = NULL;
     if(PyObject_TypeCheck(self, &pyopencv_${name}_Type))
         _self_ = dynamic_cast<$cname*>(${amp}((pyopencv_${name}_t*)self)->v.get());
-    if (_self_ == NULL)
+    if (!_self_)
         return failmsgp("Incorrect type of self (must be '${name}' or its derivative)");
 """)
 
@@ -46,20 +48,7 @@ gen_template_func_body = Template("""$code_decl
     }
 """)
 
-py_major_version = sys.version_info[0]
-if __name__ == "__main__":
-    if len(sys.argv) > 3:
-        if sys.argv[3] == 'PYTHON3':
-            py_major_version = 3
-        elif sys.argv[3] == 'PYTHON2':
-            py_major_version = 2
-        else:
-            raise Exception('Incorrect argument: expected PYTHON2 or PYTHON3, received: ' + sys.argv[3])
-if py_major_version >= 3:
-    head_init_str = "PyVarObject_HEAD_INIT(&PyType_Type, 0)"
-else:
-    head_init_str = """PyObject_HEAD_INIT(&PyType_Type)
-0,"""
+head_init_str = "CV_PYTHON_TYPE_HEAD_INIT()"
 
 gen_template_simple_type_decl = Template("""
 struct pyopencv_${name}_t
@@ -90,7 +79,7 @@ template<> PyObject* pyopencv_from(const ${cname}& r)
 
 template<> bool pyopencv_to(PyObject* src, ${cname}& dst, const char* name)
 {
-    if( src == NULL || src == Py_None )
+    if(!src || src == Py_None)
         return true;
     if(!PyObject_TypeCheck(src, &pyopencv_${name}_Type))
     {
@@ -133,7 +122,7 @@ template<> PyObject* pyopencv_from(const Ptr<${cname}>& r)
 
 template<> bool pyopencv_to(PyObject* src, Ptr<${cname}>& dst, const char* name)
 {
-    if( src == NULL || src == Py_None )
+    if(!src || src == Py_None)
         return true;
     if(!PyObject_TypeCheck(src, &pyopencv_${name}_Type))
     {
@@ -205,7 +194,7 @@ gen_template_get_prop_algo = Template("""
 static PyObject* pyopencv_${name}_get_${member}(pyopencv_${name}_t* p, void *closure)
 {
     $cname* _self_ = dynamic_cast<$cname*>(p->v.get());
-    if (_self_ == NULL)
+    if (!_self_)
         return failmsgp("Incorrect type of object (must be '${name}' or its derivative)");
     return pyopencv_from(_self_${access}${member});
 }
@@ -214,7 +203,7 @@ static PyObject* pyopencv_${name}_get_${member}(pyopencv_${name}_t* p, void *clo
 gen_template_set_prop = Template("""
 static int pyopencv_${name}_set_${member}(pyopencv_${name}_t* p, PyObject *value, void *closure)
 {
-    if (value == NULL)
+    if (!value)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot delete the ${member} attribute");
         return -1;
@@ -226,13 +215,13 @@ static int pyopencv_${name}_set_${member}(pyopencv_${name}_t* p, PyObject *value
 gen_template_set_prop_algo = Template("""
 static int pyopencv_${name}_set_${member}(pyopencv_${name}_t* p, PyObject *value, void *closure)
 {
-    if (value == NULL)
+    if (!value)
     {
         PyErr_SetString(PyExc_TypeError, "Cannot delete the ${member} attribute");
         return -1;
     }
     $cname* _self_ = dynamic_cast<$cname*>(p->v.get());
-    if (_self_ == NULL)
+    if (!_self_)
     {
         failmsgp("Incorrect type of object (must be '${name}' or its derivative)");
         return -1;
@@ -415,7 +404,7 @@ class ArgInfo(object):
         self.py_outputarg = False
 
     def isbig(self):
-        return self.tp == "Mat" or self.tp == "vector_Mat"\
+        return self.tp == "Mat" or self.tp == "vector_Mat" or self.tp == "cuda::GpuMat"\
                or self.tp == "UMat" or self.tp == "vector_UMat" # or self.tp.startswith("vector")
 
     def crepr(self):
@@ -612,13 +601,9 @@ class FuncInfo(object):
         # Convert unicode chars to xml representation, but keep as string instead of bytes
         full_docstring = full_docstring.encode('ascii', errors='xmlcharrefreplace').decode()
 
-        flags = ["METH_VARARGS", "METH_KEYWORDS"]
-        if self.isclassmethod:
-            flags.append("METH_CLASS")
-
-        return Template('    {"$py_funcname", (PyCFunction)$wrap_funcname, $flags, "$py_docstring"},\n'
+        return Template('    {"$py_funcname", CV_PY_FN_WITH_KW_($wrap_funcname, $flags), "$py_docstring"},\n'
                         ).substitute(py_funcname = self.variants[0].wname, wrap_funcname=self.get_wrapper_name(),
-                                     flags = " | ".join(flags), py_docstring = full_docstring)
+                                     flags = 'METH_CLASS' if self.isclassmethod else '0', py_docstring = full_docstring)
 
     def gen_code(self, codegen):
         all_classes = codegen.classes
@@ -673,15 +658,12 @@ class FuncInfo(object):
                 tp1 = tp = a.tp
                 amp = ""
                 defval0 = ""
-                if tp.endswith("*"):
+                if tp in pass_by_val_types:
                     tp = tp1 = tp[:-1]
                     amp = "&"
                     if tp.endswith("*"):
                         defval0 = "0"
                         tp1 = tp.replace("*", "_ptr")
-                if tp1.endswith("*"):
-                    print("Error: type with star: a.tp=%s, tp=%s, tp1=%s" % (a.tp, tp, tp1))
-                    sys.exit(-1)
 
                 amapping = simple_argtype_mapping.get(tp, (tp, "O", defval0))
                 parse_name = a.name
@@ -703,6 +685,9 @@ class FuncInfo(object):
                     if "UMat" in tp:
                         if "Mat" in defval and "UMat" not in defval:
                             defval = defval.replace("Mat", "UMat")
+                    if "cuda::GpuMat" in tp:
+                        if "Mat" in defval and "GpuMat" not in defval:
+                            defval = defval.replace("Mat", "cuda::GpuMat")
                 # "tp arg = tp();" is equivalent to "tp arg;" in the case of complex types
                 if defval == tp + "()" and amapping[1] == "O":
                     defval = ""
@@ -771,7 +756,7 @@ class FuncInfo(object):
                     parse_arglist = ", ".join(["&" + all_cargs[argno][1] for aname, argno in v.py_arglist]),
                     code_cvt = " &&\n        ".join(code_cvt_list))
             else:
-                code_parse = "if(PyObject_Size(args) == 0 && (kw == NULL || PyObject_Size(kw) == 0))"
+                code_parse = "if(PyObject_Size(args) == 0 && (!kw || PyObject_Size(kw) == 0))"
 
             if len(v.py_outlist) == 0:
                 code_ret = "Py_RETURN_NONE"
@@ -992,7 +977,7 @@ class PythonWrapperGenerator(object):
 
     def gen(self, srcfiles, output_path):
         self.clear()
-        self.parser = hdr_parser.CppHeaderParser(generate_umat_decls=True)
+        self.parser = hdr_parser.CppHeaderParser(generate_umat_decls=True, generate_gpumat_decls=True)
 
         # step 1: scan the headers and build more descriptive maps of classes, consts, functions
         for hdr in srcfiles:
@@ -1027,9 +1012,27 @@ class PythonWrapperGenerator(object):
                     print("Generator error: unable to resolve base %s for %s"
                         % (classinfo.base, classinfo.name))
                     sys.exit(-1)
+                base_instance = self.classes[base]
                 classinfo.base = base
-                classinfo.isalgorithm |= self.classes[base].isalgorithm
+                classinfo.isalgorithm |= base_instance.isalgorithm  # wrong processing of 'isalgorithm' flag:
+                                                                    # doesn't work for trees(graphs) with depth > 2
                 self.classes[name] = classinfo
+
+        # tree-based propagation of 'isalgorithm'
+        processed = dict()
+        def process_isalgorithm(classinfo):
+            if classinfo.isalgorithm or classinfo in processed:
+                return classinfo.isalgorithm
+            res = False
+            if classinfo.base:
+                res = process_isalgorithm(self.classes[classinfo.base])
+                #assert not (res == True or classinfo.isalgorithm is False), "Internal error: " + classinfo.name + " => " + classinfo.base
+                classinfo.isalgorithm |= res
+                res = classinfo.isalgorithm
+            processed[classinfo] = True
+            return res
+        for name, classinfo in self.classes.items():
+            process_isalgorithm(classinfo)
 
         # step 2: generate code for the classes and their methods
         classlist = list(self.classes.items())

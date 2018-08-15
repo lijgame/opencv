@@ -40,8 +40,6 @@
 //M*/
 #include "precomp.hpp"
 
-#include <stdint.h>
-
 namespace cv
 {
 
@@ -340,7 +338,6 @@ LineAA( Mat& img, Point2l pt1, Point2l pt2, const void* color )
 
     if( ax > ay )
     {
-        dx = ax;
         dy = (dy ^ j) - j;
         pt1.x ^= pt2.x & j;
         pt2.x ^= pt1.x & j;
@@ -364,7 +361,6 @@ LineAA( Mat& img, Point2l pt1, Point2l pt2, const void* color )
     }
     else
     {
-        dy = ay;
         dx = (dx ^ i) - i;
         pt1.x ^= pt2.x & i;
         pt2.x ^= pt1.x & i;
@@ -679,7 +675,6 @@ Line2( Mat& img, Point2l pt1, Point2l pt2, const void* color)
 
     if( ax > ay )
     {
-        dx = ax;
         dy = (dy ^ j) - j;
         pt1.x ^= pt2.x & j;
         pt2.x ^= pt1.x & j;
@@ -694,7 +689,6 @@ Line2( Mat& img, Point2l pt1, Point2l pt2, const void* color)
     }
     else
     {
-        dy = ay;
         dx = (dx ^ i) - i;
         pt1.x ^= pt2.x & i;
         pt2.x ^= pt1.x & i;
@@ -1395,7 +1389,7 @@ FillEdgeCollection( Mat& img, std::vector<PolyEdge>& edges, const void* color )
         {
             if( last && last->y1 == y )
             {
-                // exclude edge if y reachs its lower point
+                // exclude edge if y reaches its lower point
                 prelast->next = last->next;
                 last = last->next;
                 continue;
@@ -1409,7 +1403,7 @@ FillEdgeCollection( Mat& img, std::vector<PolyEdge>& edges, const void* color )
             }
             else if( i < total )
             {
-                // insert new edge into active list if y reachs its upper point
+                // insert new edge into active list if y reaches its upper point
                 prelast->next = e;
                 e->next = last;
                 prelast = e;
@@ -1739,7 +1733,7 @@ PolyLine( Mat& img, const Point2l* v, int count, bool is_closed,
 /* ADDING A SET OF PREDEFINED MARKERS WHICH COULD BE USED TO HIGHLIGHT POSITIONS IN AN IMAGE */
 /* ----------------------------------------------------------------------------------------- */
 
-void drawMarker(Mat& img, Point position, const Scalar& color, int markerType, int markerSize, int thickness, int line_type)
+void drawMarker(InputOutputArray img, Point position, const Scalar& color, int markerType, int markerSize, int thickness, int line_type)
 {
     switch(markerType)
     {
@@ -1814,7 +1808,7 @@ void line( InputOutputArray _img, Point pt1, Point pt2, const Scalar& color,
     if( line_type == CV_AA && img.depth() != CV_8U )
         line_type = 8;
 
-    CV_Assert( 0 <= thickness && thickness <= MAX_THICKNESS );
+    CV_Assert( 0 < thickness && thickness <= MAX_THICKNESS );
     CV_Assert( 0 <= shift && shift <= XY_SHIFT );
 
     double buf[4];
@@ -1875,13 +1869,12 @@ void rectangle( InputOutputArray _img, Point pt1, Point pt2,
 }
 
 
-void rectangle( Mat& img, Rect rec,
+void rectangle( InputOutputArray img, Rect rec,
                 const Scalar& color, int thickness,
                 int lineType, int shift )
 {
     CV_INSTRUMENT_REGION()
 
-    CV_Assert( 0 <= shift && shift <= XY_SHIFT );
     if( rec.area() > 0 )
         rectangle( img, rec.tl(), rec.br() - Point(1<<shift,1<<shift),
                    color, thickness, lineType, shift );
@@ -2364,6 +2357,17 @@ Size getTextSize( const String& text, int fontFace, double fontScale, int thickn
     return size;
 }
 
+double getFontScaleFromHeight(const int fontFace, const int pixelHeight, const int thickness)
+{
+    // By https://stackoverflow.com/a/27898487/1531708
+    const int* ascii = getFontData(fontFace);
+
+    int base_line = (ascii[0] & 15);
+    int cap_line = (ascii[0] >> 4) & 15;
+
+    return static_cast<double>(pixelHeight - static_cast<double>((thickness + 1)) / 2.0) / static_cast<double>(cap_line + base_line);
+}
+
 }
 
 
@@ -2389,8 +2393,8 @@ void cv::fillPoly(InputOutputArray _img, InputArrayOfArrays pts,
         return;
     AutoBuffer<Point*> _ptsptr(ncontours);
     AutoBuffer<int> _npts(ncontours);
-    Point** ptsptr = _ptsptr;
-    int* npts = _npts;
+    Point** ptsptr = _ptsptr.data();
+    int* npts = _npts.data();
 
     for( i = 0; i < ncontours; i++ )
     {
@@ -2417,8 +2421,8 @@ void cv::polylines(InputOutputArray _img, InputArrayOfArrays pts,
         return;
     AutoBuffer<Point*> _ptsptr(ncontours);
     AutoBuffer<int> _npts(ncontours);
-    Point** ptsptr = _ptsptr;
-    int* npts = _npts;
+    Point** ptsptr = _ptsptr.data();
+    int* npts = _npts.data();
 
     for( i = 0; i < ncontours; i++ )
     {
@@ -2554,6 +2558,11 @@ static const int CodeDeltas[8][2] =
 
 #define CV_ADJUST_EDGE_COUNT( count, seq )  \
     ((count) -= ((count) == (seq)->total && !CV_IS_SEQ_CLOSED(seq)))
+
+#if defined __GNUC__ && __GNUC__ >= 8
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wclass-memaccess"
+#endif
 
 CV_IMPL void
 cvDrawContours( void* _img, CvSeq* contour,
@@ -2885,5 +2894,9 @@ cvGetTextSize( const char *text, const CvFont *_font, CvSize *_size, int *_base_
     if( _size )
         *_size = size;
 }
+
+#if defined __GNUC__ && __GNUC__ >= 8
+#pragma GCC diagnostic pop // "-Wclass-memaccess"
+#endif
 
 /* End of file. */
