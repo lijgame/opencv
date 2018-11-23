@@ -79,7 +79,7 @@ PFMDecoder::~PFMDecoder()
 {
 }
 
-PFMDecoder::PFMDecoder()
+PFMDecoder::PFMDecoder() : m_scale_factor(0), m_swap_byte_order(false)
 {
   m_strm.close();
 }
@@ -185,12 +185,14 @@ PFMEncoder::~PFMEncoder()
 
 bool PFMEncoder::isFormatSupported(int depth) const
 {
-  return CV_MAT_DEPTH(depth) == CV_32F || CV_MAT_DEPTH(depth) == CV_8U;
+  // any depth will be converted into 32-bit float.
+  CV_UNUSED(depth);
+  return true;
 }
 
 bool PFMEncoder::write(const Mat& img, const std::vector<int>& params)
 {
-  (void) params;
+  CV_UNUSED(params);
 
   WLByteStream strm;
   if (m_buf) {
@@ -246,8 +248,8 @@ bool PFMEncoder::write(const Mat& img, const std::vector<int>& params)
         rgb_row[x*3+1] = bgr_row[x*3+1];
         rgb_row[x*3+2] = bgr_row[x*3+0];
       }
-      strm.putBytes(  reinterpret_cast<const uchar*>(rgb_row.data()),
-                      static_cast<int>(sizeof(float) * row_size));
+      strm.putBytes( reinterpret_cast<const uchar*>(rgb_row.data()),
+                     static_cast<int>(sizeof(float) * row_size) );
     } else if (float_img.channels() == 1) {
       strm.putBytes(float_img.ptr(y), sizeof(float) * float_img.cols);
     }

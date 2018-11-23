@@ -140,8 +140,10 @@ void cvImageWidgetSetImage(CvImageWidget * widget, const CvArr *arr){
         widget->original_image = cvCreateMat( mat->rows, mat->cols, CV_8UC3 );
         gtk_widget_queue_resize( GTK_WIDGET( widget ) );
     }
-    cvConvertImage( mat, widget->original_image,
-                            (origin != 0 ? CV_CVTIMG_FLIP : 0) + CV_CVTIMG_SWAP_RB );
+    CV_Assert(origin == 0);
+    cv::Mat src = cv::cvarrToMat(arr), dst = cv::cvarrToMat(widget->original_image);
+    cv::cvtColor(src, dst, cv::COLOR_BGR2RGB, dst.channels());
+    CV_Assert(dst.data == widget->original_image->data.ptr);
     if(widget->scaled_image){
         cvResize( widget->original_image, widget->scaled_image, CV_INTER_AREA );
     }
@@ -1755,8 +1757,8 @@ static gboolean icvOnMouse( GtkWidget *widget, GdkEvent *event, gpointer user_da
 {
     // TODO move this logic to CvImageWidget
     CvWindow* window = (CvWindow*)user_data;
-    CvPoint2D32f pt32f(-1., -1.);
-    CvPoint pt(-1,-1);
+    CvPoint2D32f pt32f = {-1., -1.};
+    CvPoint pt = {-1,-1};
     int cv_event = -1, state = 0, flags = 0;
     CvImageWidget * image_widget = CV_IMAGE_WIDGET( widget );
 

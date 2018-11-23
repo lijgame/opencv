@@ -50,7 +50,7 @@
 
 namespace cv {
 namespace dnn {
-CV__DNN_EXPERIMENTAL_NS_BEGIN
+CV__DNN_INLINE_NS_BEGIN
 
 //Slicing
 
@@ -209,11 +209,11 @@ inline Range clamp(const Range& r, int axisSize)
 {
     Range clamped(std::max(r.start, 0),
                   r.end > 0 ? std::min(r.end, axisSize) : axisSize + r.end + 1);
-    CV_Assert(clamped.start < clamped.end, clamped.end <= axisSize);
+    CV_Assert_N(clamped.start < clamped.end, clamped.end <= axisSize);
     return clamped;
 }
 
-CV__DNN_EXPERIMENTAL_NS_END
+CV__DNN_INLINE_NS_END
 }
 }
 #endif
