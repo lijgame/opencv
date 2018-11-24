@@ -39,7 +39,6 @@ static double       param_max_deviation;
 static unsigned int param_min_samples;
 static unsigned int param_force_samples;
 static double       param_time_limit;
-static int          param_threads;
 static bool         param_write_sanity;
 static bool         param_verify_sanity;
 #ifdef CV_COLLECT_IMPL_DATA
@@ -71,7 +70,7 @@ static void setCurrentThreadAffinityMask(int mask)
     if (syscallres)
     {
         int err=errno;
-        err=err;//to avoid warnings about unused variables
+        CV_UNUSED(err);
         LOGE("Error in the syscall setaffinity: mask=%d=0x%x err=%d=0x%x", mask, mask, err, err);
     }
 }
@@ -233,7 +232,7 @@ void Regression::init(const std::string& testSuitName, const std::string& ext)
             storageOutPath += ext;
         }
     }
-    catch(cv::Exception&)
+    catch(const cv::Exception&)
     {
         LOGE("Failed to open sanity data for reading: %s", storageInPath.c_str());
     }
@@ -595,11 +594,11 @@ Regression& Regression::operator() (const std::string& name, cv::InputArray arra
     // exit if current test is already failed
     if(::testing::UnitTest::GetInstance()->current_test_info()->result()->Failed()) return *this;
 
-    if(!array.empty() && array.depth() == CV_USRTYPE1)
+    /*if(!array.empty() && array.depth() == CV_USRTYPE1)
     {
         ADD_FAILURE() << "  Can not check regression for CV_USRTYPE1 data type for " << name;
         return *this;
-    }
+    }*/
 
     std::string nodename = getCurrentTestNodeName();
 
@@ -623,7 +622,7 @@ Regression& Regression::operator() (const std::string& name, cv::InputArray arra
         }
         else if(param_verify_sanity)
         {
-            ADD_FAILURE() << "  No regression data for " << name << " argument";
+            ADD_FAILURE() << "  No regression data for " << name << " argument, test node: " << nodename;
         }
     }
     else
@@ -999,6 +998,7 @@ void TestBase::Init(const std::vector<std::string> & availableImpls,
         "{   perf_cuda_device            |0        |run CUDA test suite onto specific CUDA capable device}"
         "{   perf_cuda_info_only         |false    |print an information about system and an available CUDA devices and then exit.}"
 #endif
+        "{ skip_unstable                 |false    |skip unstable tests }"
     ;
 
     cv::CommandLineParser args(argc, argv, command_line_keys);
@@ -1041,7 +1041,7 @@ void TestBase::Init(const std::vector<std::string> & availableImpls,
 #ifdef HAVE_IPP
     test_ipp_check      = !args.get<bool>("perf_ipp_check") ? getenv("OPENCV_IPP_CHECK") != NULL : true;
 #endif
-    param_threads       = args.get<int>("perf_threads");
+    testThreads         = args.get<int>("perf_threads");
 #ifdef CV_COLLECT_IMPL_DATA
     param_collect_impl  = args.get<bool>("perf_collect_impl");
 #endif
@@ -1096,6 +1096,8 @@ void TestBase::Init(const std::vector<std::string> & availableImpls,
     if (printOnly)
         exit(0);
 #endif
+
+    skipUnstableTests = args.get<bool>("skip_unstable");
 
     if (available_impls.size() > 1)
         printf("[----------]\n[   INFO   ] \tImplementation variant: %s.\n[----------]\n", param_impl.c_str()), fflush(stdout);
@@ -1157,7 +1159,7 @@ void TestBase::Init(const std::vector<std::string> & availableImpls,
 void TestBase::RecordRunParameters()
 {
     ::testing::Test::RecordProperty("cv_implementation", param_impl);
-    ::testing::Test::RecordProperty("cv_num_threads", param_threads);
+    ::testing::Test::RecordProperty("cv_num_threads", testThreads);
 
 #ifdef HAVE_CUDA
     if (param_impl == "cuda")
@@ -1691,9 +1693,10 @@ void TestBase::validateMetrics()
     {
         double mean = metrics.mean * 1000.0f / metrics.frequency;
         double median = metrics.median * 1000.0f / metrics.frequency;
+        double min_value = metrics.min * 1000.0f / metrics.frequency;
         double stddev = metrics.stddev * 1000.0f / metrics.frequency;
         double percents = stddev / mean * 100.f;
-        printf("[ PERFSTAT ]    (samples = %d, mean = %.2f, median = %.2f, stddev = %.2f (%.1f%%))\n", (int)metrics.samples, mean, median, stddev, percents);
+        printf("[ PERFSTAT ]    (samples=%d   mean=%.2f   median=%.2f   min=%.2f   stddev=%.2f (%.1f%%))\n", (int)metrics.samples, mean, median, min_value, stddev, percents);
     }
     else
     {
@@ -1848,8 +1851,8 @@ void TestBase::SetUp()
 {
     cv::theRNG().state = param_seed; // this rng should generate same numbers for each run
 
-    if (param_threads >= 0)
-        cv::setNumThreads(param_threads);
+    if (testThreads >= 0)
+        cv::setNumThreads(testThreads);
     else
         cv::setNumThreads(-1);
 
@@ -1892,12 +1895,6 @@ void TestBase::TearDown()
             return;
         }
     }
-
-    const ::testing::TestInfo* const test_info = ::testing::UnitTest::GetInstance()->current_test_info();
-    const char* type_param = test_info->type_param();
-    const char* value_param = test_info->value_param();
-    if (value_param) printf("[ VALUE    ] \t%s\n", value_param), fflush(stdout);
-    if (type_param)  printf("[ TYPE     ] \t%s\n", type_param), fflush(stdout);
 
 #ifdef CV_COLLECT_IMPL_DATA
     if(param_collect_impl)
@@ -1990,22 +1987,22 @@ void TestBase::RunPerfTestBody()
             implConf.GetImpl();
 #endif
     }
-    catch(SkipTestException&)
+    catch(const SkipTestException&)
     {
         metrics.terminationReason = performance_metrics::TERM_SKIP_TEST;
         return;
     }
-    catch(PerfSkipTestException&)
+    catch(const PerfSkipTestException&)
     {
         metrics.terminationReason = performance_metrics::TERM_SKIP_TEST;
         return;
     }
-    catch(PerfEarlyExitException&)
+    catch(const PerfEarlyExitException&)
     {
         metrics.terminationReason = performance_metrics::TERM_INTERRUPT;
         return;//no additional failure logging
     }
-    catch(cv::Exception& e)
+    catch(const cv::Exception& e)
     {
         metrics.terminationReason = performance_metrics::TERM_EXCEPTION;
         #ifdef HAVE_CUDA
@@ -2014,7 +2011,7 @@ void TestBase::RunPerfTestBody()
         #endif
         FAIL() << "Expected: PerfTestBody() doesn't throw an exception.\n  Actual: it throws cv::Exception:\n  " << e.what();
     }
-    catch(std::exception& e)
+    catch(const std::exception& e)
     {
         metrics.terminationReason = performance_metrics::TERM_EXCEPTION;
         FAIL() << "Expected: PerfTestBody() doesn't throw an exception.\n  Actual: it throws std::exception:\n  " << e.what();
@@ -2169,7 +2166,7 @@ void perf::sort(std::vector<cv::KeyPoint>& pts, cv::InputOutputArray descriptors
     for (int i = 0; i < desc.rows; ++i)
         idxs[i] = i;
 
-    std::sort((int*)idxs, (int*)idxs + desc.rows, KeypointComparator(pts));
+    std::sort(idxs.data(), idxs.data() + desc.rows, KeypointComparator(pts));
 
     std::vector<cv::KeyPoint> spts(pts.size());
     cv::Mat sdesc(desc.size(), desc.type());
@@ -2201,19 +2198,11 @@ namespace perf
 
 void PrintTo(const MatType& t, ::std::ostream* os)
 {
-    switch( CV_MAT_DEPTH((int)t) )
-    {
-        case CV_8U:  *os << "8U";  break;
-        case CV_8S:  *os << "8S";  break;
-        case CV_16U: *os << "16U"; break;
-        case CV_16S: *os << "16S"; break;
-        case CV_32S: *os << "32S"; break;
-        case CV_32F: *os << "32F"; break;
-        case CV_64F: *os << "64F"; break;
-        case CV_USRTYPE1: *os << "USRTYPE1"; break;
-        default: *os << "INVALID_TYPE"; break;
-    }
-    *os << 'C' << CV_MAT_CN((int)t);
+    String name = typeToString(t);
+    if (name.size() > 3 && name[0] == 'C' && name[1] == 'V' && name[2] == '_')
+        *os << name.substr(3);
+    else
+        *os << name;
 }
 
 } //namespace perf

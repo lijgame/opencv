@@ -495,6 +495,13 @@ static bool ocl_moments( InputArray _src, Moments& m, bool binary)
     const int TILE_SIZE = 32;
     const int K = 10;
 
+    Size sz = _src.getSz();
+    int xtiles = divUp(sz.width, TILE_SIZE);
+    int ytiles = divUp(sz.height, TILE_SIZE);
+    int ntiles = xtiles*ytiles;
+    if (ntiles == 0)
+        return false;
+
     ocl::Kernel k = ocl::Kernel("moments", ocl::imgproc::moments_oclsrc,
         format("-D TILE_SIZE=%d%s",
         TILE_SIZE,
@@ -504,13 +511,10 @@ static bool ocl_moments( InputArray _src, Moments& m, bool binary)
         return false;
 
     UMat src = _src.getUMat();
-    Size sz = src.size();
-    int xtiles = (sz.width + TILE_SIZE-1)/TILE_SIZE;
-    int ytiles = (sz.height + TILE_SIZE-1)/TILE_SIZE;
-    int ntiles = xtiles*ytiles;
     UMat umbuf(1, ntiles*K, CV_32S);
 
-    size_t globalsize[] = {(size_t)xtiles, (size_t)sz.height}, localsize[] = {1, TILE_SIZE};
+    size_t globalsize[] = {(size_t)xtiles, std::max((size_t)TILE_SIZE, (size_t)sz.height)};
+    size_t localsize[] = {1, TILE_SIZE};
     bool ok = k.args(ocl::KernelArg::ReadOnly(src),
                      ocl::KernelArg::PtrWriteOnly(umbuf),
                      xtiles).run(2, globalsize, localsize, true);
@@ -569,7 +573,13 @@ typedef IppStatus (CV_STDCALL * ippiMoments)(const void* pSrc, int srcStep, Ippi
 static bool ipp_moments(Mat &src, Moments &m )
 {
 #if IPP_VERSION_X100 >= 900
-    CV_INSTRUMENT_REGION_IPP()
+    CV_INSTRUMENT_REGION_IPP();
+
+#if IPP_VERSION_X100 < 201801
+    // Degradations for CV_8UC1
+    if(src.type() == CV_8UC1)
+        return false;
+#endif
 
     IppiSize  roi      = { src.cols, src.rows };
     IppiPoint point    = { 0, 0 };
@@ -647,7 +657,7 @@ static bool ipp_moments(Mat &src, Moments &m )
 
 cv::Moments cv::moments( InputArray _src, bool binary )
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     const int TILE_SIZE = 32;
     MomentsInTileFunc func = 0;
@@ -757,7 +767,7 @@ cv::Moments cv::moments( InputArray _src, bool binary )
 
 void cv::HuMoments( const Moments& m, double hu[7] )
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     double t0 = m.nu30 + m.nu12;
     double t1 = m.nu21 + m.nu03;
@@ -786,7 +796,7 @@ void cv::HuMoments( const Moments& m, double hu[7] )
 
 void cv::HuMoments( const Moments& m, OutputArray _hu )
 {
-    CV_INSTRUMENT_REGION()
+    CV_INSTRUMENT_REGION();
 
     _hu.create(7, 1, CV_64F);
     Mat hu = _hu.getMat();
@@ -805,7 +815,7 @@ CV_IMPL void cvMoments( const CvArr* arr, CvMoments* moments, int binary )
         src = cv::cvarrToMat(arr);
     cv::Moments m = cv::moments(src, binary != 0);
     CV_Assert( moments != 0 );
-    *moments = m;
+    *moments = cvMoments(m);
 }
 
 

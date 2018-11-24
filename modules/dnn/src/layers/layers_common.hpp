@@ -47,28 +47,33 @@
 
 #define CV_CPU_OPTIMIZATION_DECLARATIONS_ONLY
 // dispatched AVX/AVX2 optimizations
-#include "layers/layers_common.simd.hpp"
+#include "./layers_common.simd.hpp"
 #include "layers/layers_common.simd_declarations.hpp"
 #undef CV_CPU_OPTIMIZATION_DECLARATIONS_ONLY
+
+#ifdef HAVE_OPENCL
+#include "../ocl4dnn/include/ocl4dnn.hpp"
+#endif
 
 namespace cv
 {
 namespace dnn
 {
 
-void getConvolutionKernelParams(const LayerParams &params, int &kernelH, int &kernelW, int &padH, int &padW,
+void getConvolutionKernelParams(const LayerParams &params, int &kernelH, int &kernelW, int &padT, int &padL, int &padB, int &padR,
                                 int &strideH, int &strideW, int &dilationH, int &dilationW, cv::String& padMode);
 
 void getPoolingKernelParams(const LayerParams &params, int &kernelH, int &kernelW, bool &globalPooling,
-                            int &padH, int &padW, int &strideH, int &strideW, cv::String& padMode);
+                            int &padT, int &padL, int &padB, int &padR, int &strideH, int &strideW, cv::String& padMode);
 
 void getConvPoolOutParams(const Size& inp, const Size &kernel,
                           const Size &stride, const String &padMode,
-                          Size& out);
+                          const Size &dilation, Size& out);
+
 
 void getConvPoolPaddings(const Size& inp, const Size& out,
                          const Size &kernel, const Size &stride,
-                         const String &padMode, Size &pad);
+                         const String &padMode, const Size &dilation, int &padT, int &padL, int &padB, int &padR);
 
 }
 }

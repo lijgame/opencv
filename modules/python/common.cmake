@@ -1,88 +1,53 @@
 # This file is included from a subdirectory
-set(PYTHON_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../")
+set(PYTHON_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}")
+
+ocv_add_module(${MODULE_NAME} BINDINGS PRIVATE_REQUIRED opencv_python_bindings_generator)
+
+include_directories(SYSTEM
+    "${${PYTHON}_INCLUDE_PATH}"
+    ${${PYTHON}_NUMPY_INCLUDE_DIRS}
+)
+ocv_module_include_directories(
+    "${PYTHON_SOURCE_DIR}/src2"
+    "${OPENCV_PYTHON_BINDINGS_DIR}"
+)
 
 # try to use dynamic symbols linking with libpython.so
 set(OPENCV_FORCE_PYTHON_LIBS OFF CACHE BOOL "")
 string(REPLACE "-Wl,--no-undefined" "" CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
-
-ocv_add_module(${MODULE_NAME} BINDINGS)
-
-ocv_module_include_directories(
-    "${${PYTHON}_INCLUDE_PATH}"
-    ${${PYTHON}_NUMPY_INCLUDE_DIRS}
-    "${PYTHON_SOURCE_DIR}/src2"
-    )
-
-# get list of modules to wrap
-# message(STATUS "Wrapped in ${MODULE_NAME}:")
-set(OPENCV_PYTHON_MODULES)
-foreach(m ${OPENCV_MODULES_BUILD})
-  if (";${OPENCV_MODULE_${m}_WRAPPERS};" MATCHES ";${MODULE_NAME};" AND HAVE_${m})
-    list(APPEND OPENCV_PYTHON_MODULES ${m})
-    # message(STATUS "\t${m}")
-  endif()
-endforeach()
-
-set(opencv_hdrs "")
-set(opencv_userdef_hdrs "")
-foreach(m ${OPENCV_PYTHON_MODULES})
-  list(APPEND opencv_hdrs ${OPENCV_MODULE_${m}_HEADERS})
-  file(GLOB userdef_hdrs ${OPENCV_MODULE_${m}_LOCATION}/misc/python/pyopencv*.hpp)
-  list(APPEND opencv_userdef_hdrs ${userdef_hdrs})
-endforeach(m)
-
-# header blacklist
-ocv_list_filterout(opencv_hdrs "modules/.*\\\\.h$")
-ocv_list_filterout(opencv_hdrs "modules/core/.*/cuda")
-ocv_list_filterout(opencv_hdrs "modules/cuda.*")
-ocv_list_filterout(opencv_hdrs "modules/cudev")
-ocv_list_filterout(opencv_hdrs "modules/core/.*/hal/")
-ocv_list_filterout(opencv_hdrs "modules/.+/utils/.*")
-ocv_list_filterout(opencv_hdrs "modules/.*\\\\.inl\\\\.h*")
-ocv_list_filterout(opencv_hdrs "modules/.*_inl\\\\.h*")
-ocv_list_filterout(opencv_hdrs "modules/.*\\\\.details\\\\.h*")
-ocv_list_filterout(opencv_hdrs "modules/.*/detection_based_tracker\\\\.hpp") # Conditional compilation
-
-set(cv2_generated_hdrs
-    "${CMAKE_CURRENT_BINARY_DIR}/pyopencv_generated_include.h"
-    "${CMAKE_CURRENT_BINARY_DIR}/pyopencv_generated_funcs.h"
-    "${CMAKE_CURRENT_BINARY_DIR}/pyopencv_generated_types.h"
-    "${CMAKE_CURRENT_BINARY_DIR}/pyopencv_generated_type_reg.h"
-    "${CMAKE_CURRENT_BINARY_DIR}/pyopencv_generated_ns_reg.h")
-
-string(REPLACE ";" "\n" opencv_hdrs_ "${opencv_hdrs}")
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/headers.txt" "${opencv_hdrs_}")
-add_custom_command(
-   OUTPUT ${cv2_generated_hdrs}
-   COMMAND ${PYTHON_DEFAULT_EXECUTABLE} "${PYTHON_SOURCE_DIR}/src2/gen2.py" ${CMAKE_CURRENT_BINARY_DIR} "${CMAKE_CURRENT_BINARY_DIR}/headers.txt" "${PYTHON}"
-   DEPENDS ${PYTHON_SOURCE_DIR}/src2/gen2.py
-   DEPENDS ${PYTHON_SOURCE_DIR}/src2/hdr_parser.py
-   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/headers.txt
-   DEPENDS ${opencv_hdrs})
-
-set(cv2_custom_hdr "${CMAKE_CURRENT_BINARY_DIR}/pyopencv_custom_headers.h")
-file(WRITE ${cv2_custom_hdr} "//user-defined headers\n")
-foreach(uh ${opencv_userdef_hdrs})
-    file(APPEND ${cv2_custom_hdr} "#include \"${uh}\"\n")
-endforeach(uh)
+if(NOT WIN32 AND NOT APPLE AND NOT OPENCV_PYTHON_SKIP_LINKER_EXCLUDE_LIBS)
+  set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -Wl,--exclude-libs=ALL")
+endif()
 
 ocv_add_library(${the_module} MODULE ${PYTHON_SOURCE_DIR}/src2/cv2.cpp ${cv2_generated_hdrs} ${opencv_userdef_hdrs} ${cv2_custom_hdr})
+if(TARGET gen_opencv_python_source)
+  add_dependencies(${the_module} gen_opencv_python_source)
+endif()
 
 if(APPLE)
   set_target_properties(${the_module} PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
 elseif(WIN32 OR OPENCV_FORCE_PYTHON_LIBS)
   if(${PYTHON}_DEBUG_LIBRARIES AND NOT ${PYTHON}_LIBRARIES MATCHES "optimized.*debug")
-    ocv_target_link_libraries(${the_module} debug ${${PYTHON}_DEBUG_LIBRARIES} optimized ${${PYTHON}_LIBRARIES})
+    ocv_target_link_libraries(${the_module} LINK_PRIVATE debug ${${PYTHON}_DEBUG_LIBRARIES} optimized ${${PYTHON}_LIBRARIES})
   else()
-    ocv_target_link_libraries(${the_module} ${${PYTHON}_LIBRARIES})
+    ocv_target_link_libraries(${the_module} LINK_PRIVATE ${${PYTHON}_LIBRARIES})
   endif()
 endif()
-ocv_target_link_libraries(${the_module} ${OPENCV_MODULE_${the_module}_DEPS})
+
+if(TARGET gen_opencv_python_source)
+  set(deps ${OPENCV_MODULE_${the_module}_DEPS})
+  list(REMOVE_ITEM deps opencv_python_bindings_generator) # don't add dummy module to target_link_libraries list
+endif()
+ocv_target_link_libraries(${the_module} LINK_PRIVATE ${deps})
 
 if(DEFINED ${PYTHON}_CVPY_SUFFIX)
   set(CVPY_SUFFIX "${${PYTHON}_CVPY_SUFFIX}")
 else()
-  execute_process(COMMAND ${${PYTHON}_EXECUTABLE} -c "import distutils.sysconfig; print(distutils.sysconfig.get_config_var('SO'))"
+  set(__python_ext_suffix_var "EXT_SUFFIX")
+  if("${${PYTHON}_VERSION_MAJOR}" STREQUAL "2")
+    set(__python_ext_suffix_var "SO")
+  endif()
+  execute_process(COMMAND ${${PYTHON}_EXECUTABLE} -c "import distutils.sysconfig; print(distutils.sysconfig.get_config_var('${__python_ext_suffix_var}'))"
                   RESULT_VARIABLE PYTHON_CVPY_PROCESS
                   OUTPUT_VARIABLE CVPY_SUFFIX
                   OUTPUT_STRIP_TRAILING_WHITESPACE)
@@ -91,9 +56,12 @@ else()
   endif()
 endif()
 
+ocv_update(OPENCV_PYTHON_EXTENSION_BUILD_PATH "${LIBRARY_OUTPUT_PATH}/${MODULE_INSTALL_SUBDIR}")
+
 set_target_properties(${the_module} PROPERTIES
-                      LIBRARY_OUTPUT_DIRECTORY  "${LIBRARY_OUTPUT_PATH}/${MODULE_INSTALL_SUBDIR}"
+                      LIBRARY_OUTPUT_DIRECTORY  "${OPENCV_PYTHON_EXTENSION_BUILD_PATH}"
                       ARCHIVE_OUTPUT_NAME ${the_module}  # prevent name conflict for python2/3 outputs
+                      DEFINE_SYMBOL CVAPI_EXPORTS
                       PREFIX ""
                       OUTPUT_NAME cv2
                       SUFFIX ${CVPY_SUFFIX})
@@ -106,7 +74,7 @@ if(MSVC)
   add_definitions(-DCVAPI_EXPORTS)
 endif()
 
-if(CMAKE_COMPILER_IS_GNUCXX AND NOT ENABLE_NOISY_WARNINGS)
+if((CV_GCC OR CV_CLANG) AND NOT ENABLE_NOISY_WARNINGS)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-function")
 endif()
 
@@ -117,7 +85,16 @@ if(MSVC AND NOT ENABLE_NOISY_WARNINGS)
   string(REPLACE "/W4" "/W3" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
-ocv_warnings_disable(CMAKE_CXX_FLAGS -Woverloaded-virtual -Wunused-private-field)
+
+if(MSVC)
+  ocv_warnings_disable(CMAKE_CXX_FLAGS /wd4996)
+else()
+  ocv_warnings_disable(CMAKE_CXX_FLAGS
+      -Wdeprecated-declarations
+      -Woverloaded-virtual -Wunused-private-field
+      -Wundef # accurate guard via #pragma doesn't work (C++ preprocessor doesn't handle #pragma)
+  )
+endif()
 
 if(MSVC AND NOT BUILD_SHARED_LIBS)
   set_target_properties(${the_module} PROPERTIES LINK_FLAGS "/NODEFAULTLIB:atlthunk.lib /NODEFAULTLIB:atlsd.lib /DEBUG")
@@ -135,30 +112,66 @@ else()
   set(PYTHON_INSTALL_ARCHIVE ARCHIVE DESTINATION ${${PYTHON}_PACKAGES_PATH} COMPONENT python)
 endif()
 
-if(NOT INSTALL_CREATE_DISTRIB AND DEFINED ${PYTHON}_PACKAGES_PATH)
-  set(__dst "${${PYTHON}_PACKAGES_PATH}")
+ocv_assert(${PYTHON}_VERSION_MAJOR)
+ocv_assert(${PYTHON}_VERSION_MINOR)
+
+set(__python_loader_subdir "")
+if(NOT OPENCV_SKIP_PYTHON_LOADER)
+  set(__python_loader_subdir "cv2/")
 endif()
-if(NOT __dst)
-  if(DEFINED ${PYTHON}_VERSION_MAJOR)
-    set(__ver "${${PYTHON}_VERSION_MAJOR}.${${PYTHON}_VERSION_MINOR}")
-  elseif(DEFINED ${PYTHON}_VERSION_STRING)
-    set(__ver "${${PYTHON}_VERSION_STRING}")
-  else()
-    set(__ver "unknown")
-  endif()
-  if(INSTALL_CREATE_DISTRIB)
-    set(__dst "python/${__ver}/${OpenCV_ARCH}")
-  else()
-    set(__dst "python/${__ver}")
-  endif()
+
+if(NOT " ${PYTHON}" STREQUAL " PYTHON" AND DEFINED OPENCV_${PYTHON}_INSTALL_PATH)
+  set(__python_binary_install_path "${OPENCV_${PYTHON}_INSTALL_PATH}")
+else()
+  ocv_assert(DEFINED OPENCV_PYTHON_INSTALL_PATH)
+  set(__python_binary_install_path "${OPENCV_PYTHON_INSTALL_PATH}/${__python_loader_subdir}python-${${PYTHON}_VERSION_MAJOR}.${${PYTHON}_VERSION_MINOR}")
 endif()
 
 install(TARGETS ${the_module}
         ${PYTHON_INSTALL_CONFIGURATIONS}
-        RUNTIME DESTINATION "${__dst}" COMPONENT python
-        LIBRARY DESTINATION "${__dst}" COMPONENT python
+        RUNTIME DESTINATION "${__python_binary_install_path}" COMPONENT python
+        LIBRARY DESTINATION "${__python_binary_install_path}" COMPONENT python
         ${PYTHON_INSTALL_ARCHIVE}
         )
+
+if(NOT OPENCV_SKIP_PYTHON_LOADER)
+  ocv_assert(DEFINED OPENCV_PYTHON_INSTALL_PATH)
+  if(OpenCV_FOUND)
+    set(__loader_path "${OpenCV_BINARY_DIR}/python_loader")
+  else()
+    set(__loader_path "${CMAKE_BINARY_DIR}/python_loader")
+  endif()
+
+  set(__python_loader_install_tmp_path "${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/install/python_loader/")
+  if(IS_ABSOLUTE "${OPENCV_PYTHON_INSTALL_PATH}")
+    set(OpenCV_PYTHON_INSTALL_PATH_RELATIVE_CONFIGCMAKE "${CMAKE_INSTALL_PREFIX}/")
+    set(CMAKE_PYTHON_EXTENSION_INSTALL_PATH_BASE "'${CMAKE_INSTALL_PREFIX}'")
+  else()
+    file(RELATIVE_PATH OpenCV_PYTHON_INSTALL_PATH_RELATIVE_CONFIGCMAKE "${CMAKE_INSTALL_PREFIX}/${OPENCV_PYTHON_INSTALL_PATH}/cv2" ${CMAKE_INSTALL_PREFIX})
+    set(CMAKE_PYTHON_EXTENSION_INSTALL_PATH_BASE "os.path.join(LOADER_DIR, '${OpenCV_PYTHON_INSTALL_PATH_RELATIVE_CONFIGCMAKE}')")
+  endif()
+
+  if(DEFINED ${PYTHON}_VERSION_MINOR)
+    set(__target_config "config-${${PYTHON}_VERSION_MAJOR}.${${PYTHON}_VERSION_MINOR}.py")
+  else()
+    set(__target_config "config-${${PYTHON}_VERSION_MAJOR}.py")
+  endif()
+
+  if(CMAKE_GENERATOR MATCHES "Visual Studio")
+    set(CMAKE_PYTHON_EXTENSION_PATH "'${OPENCV_PYTHON_EXTENSION_BUILD_PATH}/Release'")  # TODO: CMAKE_BUILD_TYPE is not defined
+  else()
+    set(CMAKE_PYTHON_EXTENSION_PATH "'${OPENCV_PYTHON_EXTENSION_BUILD_PATH}'")
+  endif()
+  configure_file("${PYTHON_SOURCE_DIR}/package/template/config-x.y.py.in" "${__loader_path}/cv2/${__target_config}" @ONLY)
+
+  if(IS_ABSOLUTE __python_binary_install_path)
+    set(CMAKE_PYTHON_EXTENSION_PATH "'${__python_binary_install_path}'")
+  else()
+    set(CMAKE_PYTHON_EXTENSION_PATH "os.path.join(${CMAKE_PYTHON_EXTENSION_INSTALL_PATH_BASE}, '${__python_binary_install_path}')")
+  endif()
+  configure_file("${PYTHON_SOURCE_DIR}/package/template/config-x.y.py.in" "${__python_loader_install_tmp_path}/cv2/${__target_config}" @ONLY)
+  install(FILES "${__python_loader_install_tmp_path}/cv2/${__target_config}" DESTINATION "${OPENCV_PYTHON_INSTALL_PATH}/cv2/" COMPONENT python)
+endif()  # NOT OPENCV_SKIP_PYTHON_LOADER
 
 unset(PYTHON_SRC_DIR)
 unset(PYTHON_CVPY_PROCESS)

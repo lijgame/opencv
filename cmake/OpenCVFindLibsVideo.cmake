@@ -2,14 +2,6 @@
 #  Detect 3rd-party video IO libraries
 # ----------------------------------------------------------------------------
 
-ocv_clear_vars(HAVE_VFW)
-if(WITH_VFW)
-  try_compile(HAVE_VFW
-    "${OpenCV_BINARY_DIR}"
-    "${OpenCV_SOURCE_DIR}/cmake/checks/vfwtest.cpp"
-    CMAKE_FLAGS "-DLINK_LIBRARIES:STRING=vfw32")
-endif(WITH_VFW)
-
 # --- GStreamer ---
 ocv_clear_vars(HAVE_GSTREAMER)
 # try to find gstreamer 1.x first if 0.10 was not requested
@@ -62,16 +54,6 @@ if(WITH_GSTREAMER AND NOT HAVE_GSTREAMER OR WITH_GSTREAMER_0_10)
   endif()
 endif(WITH_GSTREAMER AND NOT HAVE_GSTREAMER OR WITH_GSTREAMER_0_10)
 
-# --- unicap ---
-ocv_clear_vars(HAVE_UNICAP)
-if(WITH_UNICAP)
-  CHECK_MODULE(libunicap HAVE_UNICAP_  VIDEOIO)
-  CHECK_MODULE(libucil HAVE_UNICAP_UCIL  VIDEOIO)
-  if(HAVE_UNICAP_ AND HAVE_UNICAP_UCIL)
-    set(HAVE_UNICAP TRUE)
-  endif()
-endif(WITH_UNICAP)
-
 # --- PvApi ---
 ocv_clear_vars(HAVE_PVAPI)
 if(WITH_PVAPI)
@@ -89,23 +71,16 @@ if(WITH_PVAPI)
       set(PVAPI_SDK_SUBDIR arm)
     endif()
 
-    get_filename_component(_PVAPI_LIBRARY "${PVAPI_INCLUDE_PATH}/../lib-pc" ABSOLUTE)
-    if(PVAPI_SDK_SUBDIR)
-      set(_PVAPI_LIBRARY "${_PVAPI_LIBRARY}/${PVAPI_SDK_SUBDIR}")
-    endif()
-    if(NOT WIN32 AND CMAKE_COMPILER_IS_GNUCXX)
-      set(_PVAPI_LIBRARY "${_PVAPI_LIBRARY}/${CMAKE_OPENCV_GCC_VERSION_MAJOR}.${CMAKE_OPENCV_GCC_VERSION_MINOR}")
-    endif()
+    get_filename_component(_PVAPI_LIBRARY_HINT "${PVAPI_INCLUDE_PATH}/../lib-pc" ABSOLUTE)
 
-    if(WIN32)
-      if(MINGW)
-        set(PVAPI_DEFINITIONS "-DPVDECL=__stdcall")
-      endif(MINGW)
-      set(PVAPI_LIBRARY "${_PVAPI_LIBRARY}/PvAPI.lib" CACHE PATH "The PvAPI library")
-    else(WIN32)
-      set(PVAPI_LIBRARY "${_PVAPI_LIBRARY}/${CMAKE_STATIC_LIBRARY_PREFIX}PvAPI${CMAKE_STATIC_LIBRARY_SUFFIX}" CACHE PATH "The PvAPI library")
-    endif(WIN32)
-    if(EXISTS "${PVAPI_LIBRARY}")
+    find_library(PVAPI_LIBRARY NAMES "PvAPI" PATHS "${_PVAPI_LIBRARY_HINT}")
+
+    if(PVAPI_LIBRARY)
+      if(WIN32)
+        if(MINGW)
+          set(PVAPI_DEFINITIONS "-DPVDECL=__stdcall")
+        endif(MINGW)
+      endif()
       set(HAVE_PVAPI TRUE)
     endif()
   endif(PVAPI_INCLUDE_PATH)
@@ -181,18 +156,8 @@ if(WITH_XINE)
 endif(WITH_XINE)
 
 # --- V4L ---
-ocv_clear_vars(HAVE_LIBV4L HAVE_CAMV4L HAVE_CAMV4L2 HAVE_VIDEOIO)
+ocv_clear_vars(HAVE_CAMV4L2 HAVE_VIDEOIO)
 if(WITH_V4L)
-  if(WITH_LIBV4L)
-    CHECK_MODULE(libv4l1 HAVE_LIBV4L1 VIDEOIO)
-    CHECK_MODULE(libv4l2 HAVE_LIBV4L2 VIDEOIO)
-    if(HAVE_LIBV4L1 AND HAVE_LIBV4L2)
-      set(HAVE_LIBV4L YES)
-    else()
-      set(HAVE_LIBV4L NO)
-    endif()
-  endif()
-  CHECK_INCLUDE_FILE(linux/videodev.h HAVE_CAMV4L)
   CHECK_INCLUDE_FILE(linux/videodev2.h HAVE_CAMV4L2)
   CHECK_INCLUDE_FILE(sys/videoio.h HAVE_VIDEOIO)
 endif(WITH_V4L)
@@ -219,12 +184,23 @@ endif(WITH_XIMEA)
 
 # --- FFMPEG ---
 ocv_clear_vars(HAVE_FFMPEG)
-if(WITH_FFMPEG)
-  if(WIN32 AND NOT ARM)
+if(WITH_FFMPEG)  # try FFmpeg autodetection
+  if(OPENCV_FFMPEG_USE_FIND_PACKAGE)
+    if(OPENCV_FFMPEG_USE_FIND_PACKAGE STREQUAL "1" OR OPENCV_FFMPEG_USE_FIND_PACKAGE STREQUAL "ON")
+      set(OPENCV_FFMPEG_USE_FIND_PACKAGE "FFMPEG")
+    endif()
+    find_package(${OPENCV_FFMPEG_USE_FIND_PACKAGE}) # Required components: AVCODEC AVFORMAT AVUTIL SWSCALE
+    if(FFMPEG_FOUND OR FFmpeg_FOUND)
+      set(HAVE_FFMPEG TRUE)
+    else()
+      message(STATUS "Can't find FFmpeg via find_package(${OPENCV_FFMPEG_USE_FIND_PACKAGE})")
+    endif()
+  elseif(WIN32 AND NOT ARM AND NOT OPENCV_FFMPEG_SKIP_DOWNLOAD)
     include("${OpenCV_SOURCE_DIR}/3rdparty/ffmpeg/ffmpeg.cmake")
     download_win_ffmpeg(FFMPEG_CMAKE_SCRIPT)
     if(FFMPEG_CMAKE_SCRIPT)
       set(HAVE_FFMPEG TRUE)
+      set(HAVE_FFMPEG_WRAPPER 1)
       include("${FFMPEG_CMAKE_SCRIPT}")
     endif()
   elseif(PKG_CONFIG_FOUND)
@@ -233,27 +209,29 @@ if(WITH_FFMPEG)
     if(FFMPEG_libavresample_FOUND)
       ocv_append_build_options(FFMPEG FFMPEG_libavresample)
     endif()
-    if(HAVE_FFMPEG)
-      try_compile(__VALID_FFMPEG
-          "${OpenCV_BINARY_DIR}"
-          "${OpenCV_SOURCE_DIR}/cmake/checks/ffmpeg_test.cpp"
-          CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${FFMPEG_INCLUDE_DIRS}"
-                      "-DLINK_DIRECTORIES:STRING=${FFMPEG_LIBRARY_DIRS}"
-                      "-DLINK_LIBRARIES:STRING=${FFMPEG_LIBRARIES}"
-          OUTPUT_VARIABLE TRY_OUT
-      )
-      if(NOT __VALID_FFMPEG)
-        #message(FATAL_ERROR "FFMPEG: test check build log:\n${TRY_OUT}")
-        message(STATUS "WARNING: Can't build ffmpeg test code")
-        set(HAVE_FFMPEG FALSE)
-      else()
-        ocv_append_build_options(VIDEOIO FFMPEG)
-      endif()
-    endif()
   else()
     message(STATUS "Can't find ffmpeg - 'pkg-config' utility is missing")
   endif()
-endif(WITH_FFMPEG)
+endif()
+if(HAVE_FFMPEG
+    AND NOT HAVE_FFMPEG_WRAPPER
+)
+  try_compile(__VALID_FFMPEG
+      "${OpenCV_BINARY_DIR}"
+      "${OpenCV_SOURCE_DIR}/cmake/checks/ffmpeg_test.cpp"
+      CMAKE_FLAGS "-DINCLUDE_DIRECTORIES:STRING=${FFMPEG_INCLUDE_DIRS}"
+                  "-DLINK_DIRECTORIES:STRING=${FFMPEG_LIBRARY_DIRS}"
+                  "-DLINK_LIBRARIES:STRING=${FFMPEG_LIBRARIES}"
+      OUTPUT_VARIABLE TRY_OUT
+  )
+  if(NOT __VALID_FFMPEG)
+    #message(FATAL_ERROR "FFMPEG: test check build log:\n${TRY_OUT}")
+    message(STATUS "WARNING: Can't build ffmpeg test code")
+    set(HAVE_FFMPEG FALSE)
+  else()
+    ocv_append_build_options(VIDEOIO FFMPEG)
+  endif()
+endif()
 
 # --- VideoInput/DirectShow ---
 if(WITH_DSHOW)
@@ -268,17 +246,20 @@ endif(WITH_DSHOW)
 ocv_clear_vars(HAVE_MSMF)
 if(WITH_MSMF)
   check_include_file(Mfapi.h HAVE_MSMF)
+  check_include_file(D3D11.h D3D11_found)
+  check_include_file(D3d11_4.h D3D11_4_found)
+  if(D3D11_found AND D3D11_4_found)
+    set(HAVE_DXVA YES)
+  else()
+    set(HAVE_DXVA NO)
+  endif()
 endif(WITH_MSMF)
 
 # --- Extra HighGUI and VideoIO libs on Windows ---
 if(WIN32)
   list(APPEND HIGHGUI_LIBRARIES comctl32 gdi32 ole32 setupapi ws2_32)
-  if(HAVE_VFW)
-    list(APPEND VIDEOIO_LIBRARIES vfw32)
-  endif()
   if(MINGW64)
     list(APPEND VIDEOIO_LIBRARIES avifil32 avicap32 winmm msvfw32)
-    list(REMOVE_ITEM VIDEOIO_LIBRARIES vfw32)
   elseif(MINGW)
     list(APPEND VIDEOIO_LIBRARIES winmm)
   endif()
@@ -288,14 +269,12 @@ if(APPLE)
   if(WITH_AVFOUNDATION)
     set(HAVE_AVFOUNDATION YES)
   endif()
-  if(NOT IOS)
-    if(WITH_QUICKTIME)
-      set(HAVE_QUICKTIME YES)
-    elseif(WITH_QTKIT)
-      set(HAVE_QTKIT YES)
-    endif()
-  endif()
 endif(APPLE)
+
+# --- Intel librealsense ---
+if(WITH_LIBREALSENSE)
+  include("${OpenCV_SOURCE_DIR}/cmake/OpenCVFindLibRealsense.cmake")
+endif(WITH_LIBREALSENSE)
 
 # --- Intel Perceptual Computing SDK ---
 if(WITH_INTELPERC)

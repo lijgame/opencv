@@ -24,18 +24,89 @@ Installation by Using the Pre-built Libraries {#tutorial_windows_install_prebuil
 
 -#  To finalize the installation go to the @ref tutorial_windows_install_path section.
 
+Installation by Using git-bash (version>=2.14.1) and cmake (version >=3.9.1){#tutorial_windows_gitbash_build}
+===============================================================
+
+-#  You must download [cmake (version >=3.9.1)](https://cmake.org) and install it. You must add cmake to PATH variable during installation
+
+-#  You must install [git-bash (version>=2.14.1)](https://git-for-windows.github.io/). Don't add git to PATH variable during installation
+
+-#  Run git-bash. You observe a command line window.
+Suppose you want to build opencv and opencv_contrib in c:/lib
+
+-#  In git command line enter following command (if folder does not exist) :
+@code{.bash}
+mkdir /c/lib
+cd /c/lib
+@endcode
+
+-#  save this script with name installOCV.sh in c:/lib
+@code{.bash}
+#!/bin/bash -e
+myRepo=$(pwd)
+CMAKE_CONFIG_GENERATOR="Visual Studio 14 2015 Win64"
+if [  ! -d "$myRepo/opencv"  ]; then
+    echo "cloning opencv"
+    git clone https://github.com/opencv/opencv.git
+    mkdir Build
+    mkdir Build/opencv
+    mkdir Install
+    mkdir Install/opencv
+else
+    cd opencv
+    git pull --rebase
+    cd ..
+fi
+if [  ! -d "$myRepo/opencv_contrib"  ]; then
+    echo "cloning opencv_contrib"
+    git clone https://github.com/opencv/opencv_contrib.git
+    mkdir Build
+    mkdir Build/opencv_contrib
+else
+    cd opencv_contrib
+    git pull --rebase
+    cd ..
+fi
+RepoSource=opencv
+pushd Build/$RepoSource
+CMAKE_OPTIONS='-DBUILD_PERF_TESTS:BOOL=OFF -DBUILD_TESTS:BOOL=OFF -DBUILD_DOCS:BOOL=OFF  -DWITH_CUDA:BOOL=OFF -DBUILD_EXAMPLES:BOOL=OFF -DINSTALL_CREATE_DISTRIB=ON'
+cmake -G"$CMAKE_CONFIG_GENERATOR" $CMAKE_OPTIONS -DOPENCV_EXTRA_MODULES_PATH="$myRepo"/opencv_contrib/modules -DCMAKE_INSTALL_PREFIX="$myRepo"/install/"$RepoSource" "$myRepo/$RepoSource"
+echo "************************* $Source_DIR -->debug"
+cmake --build .  --config debug
+echo "************************* $Source_DIR -->release"
+cmake --build .  --config release
+cmake --build .  --target install --config release
+cmake --build .  --target install --config debug
+popd
+@endcode
+    In this script I suppose you use VS 2015 in 64 bits
+@code{.bash}
+CMAKE_CONFIG_GENERATOR="Visual Studio 14 2015 Win64"
+@endcode
+    and opencv will be installed in c:/lib/install
+@code{.bash}
+-DCMAKE_INSTALL_PREFIX="$myRepo"/install/"$RepoSource" "$myRepo/$RepoSource"
+@endcode
+    with no Perf tests, no tests, no doc, no CUDA and no example
+@code{.bash}
+CMAKE_OPTIONS='-DBUILD_PERF_TESTS:BOOL=OFF -DBUILD_TESTS:BOOL=OFF -DBUILD_DOCS:BOOL=OFF -DBUILD_EXAMPLES:BOOL=OFF'
+@endcode
+-#  In git command line enter following command :
+@code{.bash}
+./installOCV.sh
+@endcode
+-# Drink a coffee or two... opencv is ready : That's all!
+-# Next time you run this script, opencv and opencv_contrib will be updated and rebuild
+
+
 Installation by Making Your Own Libraries from the Source Files {#tutorial_windows_install_build}
 ===============================================================
 
 You may find the content of this tutorial also inside the following videos:
 [Part 1](https://www.youtube.com/watch?v=NnovZ1cTlMs) and [Part 2](https://www.youtube.com/watch?v=qGNWMcfWwPU), hosted on YouTube.
 
-\htmlonly
-<div align="center">
-<iframe title="Install OpenCV by using its source files - Part 1" width="560" height="349" src="http://www.youtube.com/embed/NnovZ1cTlMs?rel=0&loop=1" frameborder="0" allowfullscreen align="middle"></iframe>
-<iframe title="Install OpenCV by using its source files - Part 2" width="560" height="349" src="http://www.youtube.com/embed/qGNWMcfWwPU?rel=0&loop=1" frameborder="0" allowfullscreen align="middle"></iframe>
-</div>
-\endhtmlonly
+@youtube{NnovZ1cTlMs}
+@youtube{qGNWMcfWwPU}
 
 **warning**
 
@@ -71,8 +142,6 @@ of them, you need to download and install them on your system.
 -   [Intel Integrated Performance Primitives (*IPP*)](http://software.intel.com/en-us/articles/intel-ipp/) may be used to improve the performance
     of color conversion, Haar training and DFT functions of the OpenCV library. Watch out, since
     this is not a free service.
--   [Intel IPP Asynchronous C/C++](http://software.intel.com/en-us/intel-ipp-preview) is currently focused delivering Intel Graphics
-    support for advanced image processing and computer vision functions.
 -   OpenCV offers a somewhat fancier and more useful graphical user interface, than the default one
     by using the [Qt framework](http://qt.nokia.com/downloads). For a quick overview of what this has to offer, look into the
     documentations *highgui* module, under the *Qt New Functions* section. Version 4.6 or later of
@@ -133,10 +202,6 @@ libraries). If you do not need the support for some of these, you can just freel
 
         ![](images/IntelTBB.png)
 
-    -#  For the [Intel IPP Asynchronous C/C++](http://software.intel.com/en-us/intel-ipp-preview) download the source files and set environment
-        variable **IPP_ASYNC_ROOT**. It should point to
-        `<your Program Files(x86) directory>/Intel/IPP Preview */ipp directory`. Here \* denotes the
-        particular preview name.
     -#  In case of the [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page#Download) library it is again a case of download and extract to the
         `D:/OpenCV/dep` directory.
     -#  Same as above with [OpenEXR](http://www.openexr.com/downloads.html).
@@ -248,6 +313,7 @@ libraries). If you do not need the support for some of these, you can just freel
         you are concerned about performance, build them and run.
     -   *BUILD_opencv_python* -\> Self-explanatory. Create the binaries to use OpenCV from the
         Python language.
+    -   *BUILD_opencv_world* -\> Generate a single "opencv_world" binary (a shared or static library, depending on *BUILD_SHARED_LIBS*) including all the modules instead of a collection of separate binaries, one binary per module.
 
     Press again the *Configure* button and ensure no errors are reported. If this is the case, you
     can tell CMake to create the project files by pushing the *Generate* button. Go to the build
@@ -330,6 +396,6 @@ Save it to the registry and you are done. If you ever change the location of you
 or want to try out your application with a different build, all you will need to do is to update the
 OPENCV_DIR variable via the *setx* command inside a command window.
 
-Now you can continue reading the tutorials with the @ref tutorial_windows_visual_studio_Opencv section.
+Now you can continue reading the tutorials with the @ref tutorial_windows_visual_studio_opencv section.
 There you will find out how to use the OpenCV library in your own projects with the help of the
 Microsoft Visual Studio IDE.

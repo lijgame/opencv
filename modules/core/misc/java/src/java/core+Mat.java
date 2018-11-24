@@ -1,5 +1,7 @@
 package org.opencv.core;
 
+import java.nio.ByteBuffer;
+
 // C++: class Mat
 //javadoc: Mat
 public class Mat {
@@ -35,6 +37,19 @@ public class Mat {
     {
 
         nativeObj = n_Mat(rows, cols, type);
+
+        return;
+    }
+
+    //
+    // C++: Mat::Mat(int rows, int cols, int type, void* data)
+    //
+
+    // javadoc: Mat::Mat(rows, cols, type, data)
+    public Mat(int rows, int cols, int type, ByteBuffer data)
+    {
+
+        nativeObj = n_Mat(rows, cols, type, data);
 
         return;
     }
@@ -667,6 +682,18 @@ public class Mat {
     }
 
     //
+    // C++: Mat Mat::reshape(int cn, int newndims, const int* newsz)
+    //
+
+    // javadoc: Mat::reshape(cn, newshape)
+    public Mat reshape(int cn, int[] newshape)
+    {
+        Mat retVal = new Mat(n_reshape_1(nativeObj, cn, newshape.length, newshape));
+
+        return retVal;
+    }
+
+    //
     // C++: Mat Mat::row(int y)
     //
 
@@ -775,6 +802,18 @@ public class Mat {
     {
 
         Size retVal = new Size(n_size(nativeObj));
+
+        return retVal;
+    }
+
+    //
+    // C++: int Mat::size(int i)
+    //
+
+    // javadoc: Mat::size(int i)
+    public int size(int i)
+    {
+        int retVal = n_size_i(nativeObj, i);
 
         return retVal;
     }
@@ -1000,6 +1039,21 @@ public class Mat {
         throw new java.lang.UnsupportedOperationException("Mat data type is not compatible: " + t);
     }
 
+    // javadoc:Mat::put(row,col,data,offset,length)
+    public int put(int row, int col, byte[] data, int offset, int length) {
+        int t = type();
+        if (data == null || length % CvType.channels(t) != 0)
+            throw new java.lang.UnsupportedOperationException(
+                    "Provided data element number (" +
+                            (data == null ? 0 : data.length) +
+                            ") should be multiple of the Mat channels count (" +
+                            CvType.channels(t) + ")");
+        if (CvType.depth(t) == CvType.CV_8U || CvType.depth(t) == CvType.CV_8S) {
+            return nPutBwOffset(nativeObj, row, col, length, offset, data);
+        }
+        throw new java.lang.UnsupportedOperationException("Mat data type is not compatible: " + t);
+    }
+
     // javadoc:Mat::get(row,col,data)
     public int get(int row, int col, byte[] data) {
         int t = type();
@@ -1100,6 +1154,9 @@ public class Mat {
 
     // C++: Mat::Mat(int rows, int cols, int type)
     private static native long n_Mat(int rows, int cols, int type);
+
+    // C++: Mat::Mat(int rows, int cols, int type, void* data)
+    private static native long n_Mat(int rows, int cols, int type, ByteBuffer data);
 
     // C++: Mat::Mat(Size size, int type)
     private static native long n_Mat(double size_width, double size_height, int type);
@@ -1238,6 +1295,9 @@ public class Mat {
 
     private static native long n_reshape(long nativeObj, int cn);
 
+    // C++: Mat Mat::reshape(int cn, int newndims, const int* newsz)
+    private static native long n_reshape_1(long nativeObj, int cn, int newndims, int[] newsz);
+
     // C++: Mat Mat::row(int y)
     private static native long n_row(long nativeObj, int y);
 
@@ -1260,6 +1320,9 @@ public class Mat {
 
     // C++: Size Mat::size()
     private static native double[] n_size(long nativeObj);
+
+    // C++: int Mat::size(int i)
+    private static native int n_size_i(long nativeObj, int i);
 
     // C++: size_t Mat::step1(int i = 0)
     private static native long n_step1(long nativeObj, int i);
@@ -1299,6 +1362,8 @@ public class Mat {
     private static native int nPutS(long self, int row, int col, int count, short[] data);
 
     private static native int nPutB(long self, int row, int col, int count, byte[] data);
+
+    private static native int nPutBwOffset(long self, int row, int col, int count, int offset, byte[] data);
 
     private static native int nGetB(long self, int row, int col, int count, byte[] vals);
 

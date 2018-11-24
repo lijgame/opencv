@@ -1,6 +1,7 @@
 package org.opencv.test.core;
 
 import java.util.Arrays;
+import java.nio.ByteBuffer;
 
 import org.opencv.core.Core;
 import org.opencv.core.CvException;
@@ -488,7 +489,7 @@ public class MatTest extends OpenCVTestCase {
     public void testIsContinuous() {
         assertTrue(gray0.isContinuous());
 
-        Mat subMat = gray0.submat(0, 0, gray0.rows() / 2, gray0.cols() / 2);
+        Mat subMat = gray0.submat(0, gray0.rows() / 2, 0, gray0.cols() / 2);
         assertFalse(subMat.isContinuous());
     }
 
@@ -816,6 +817,19 @@ public class MatTest extends OpenCVTestCase {
         assertMatEqual(truth, dst);
     }
 
+    public void testReshapeIntIntArray() {
+        Mat src = new Mat(6, 5, CvType.CV_8UC3, new Scalar(0));
+        assertEquals(2, src.dims());
+        assertEquals(src.rows(), src.size(0));
+        assertEquals(src.cols(), src.size(1));
+
+        int[] newShape = {1, src.channels() * src.cols(), 1, src.rows()};
+        dst = src.reshape(1, newShape);
+        assertEquals(newShape.length, dst.dims());
+        for (int i = 0; i < newShape.length; ++i)
+            assertEquals(newShape[i], dst.size(i));
+    }
+
     public void testRow() {
         Mat row = gray0.row(0);
         assertEquals(1, row.rows());
@@ -936,7 +950,7 @@ public class MatTest extends OpenCVTestCase {
     }
 
     public void testSubmatRect() {
-        Mat submat = gray255.submat(new Rect(5, gray255.rows() / 2, 5, gray255.cols() / 2));
+        Mat submat = gray255.submat(new Rect(5, 5, gray255.cols() / 2, gray255.rows() / 2));
         assertTrue(submat.isSubmatrix());
         assertFalse(submat.isContinuous());
 
@@ -999,6 +1013,18 @@ public class MatTest extends OpenCVTestCase {
 
         truth = new Mat(2, 2, CvType.CV_16S, new Scalar(0));
         assertMatEqual(truth, dst);
+    }
+
+    public void testMatFromByteBuffer() {
+        ByteBuffer bbuf = ByteBuffer.allocateDirect(64*64);
+        bbuf.putInt(0x01010101);
+        Mat m = new Mat(64,64,CvType.CV_8UC1,bbuf);
+        assertEquals(4, Core.countNonZero(m));
+        Core.add(m, new Scalar(1), m);
+        assertEquals(4096, Core.countNonZero(m));
+        m.release();
+        assertEquals(2, bbuf.get(0));
+        assertEquals(1, bbuf.get(4095));
     }
 
 }
