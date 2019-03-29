@@ -25,6 +25,7 @@ VkDebugReportCallbackEXT kDebugReportCallback;
 uint32_t kQueueFamilyIndex;
 std::vector<const char *> kEnabledLayers;
 std::map<std::string, std::vector<uint32_t>> kShaders;
+cv::Mutex kContextMtx;
 
 static uint32_t getComputeQueueFamilyIndex()
 {
@@ -86,7 +87,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugReportCallbackFn(
 // internally used
 void createContext()
 {
-    cv::AutoLock lock(getInitializationMutex());
+    cv::AutoLock lock(kContextMtx);
     if (!kCtx)
     {
         kCtx.reset(new Context());
@@ -280,10 +281,14 @@ Context::~Context()
     if (enableValidationLayers) {
         auto func = (PFN_vkDestroyDebugReportCallbackEXT)
             vkGetInstanceProcAddr(kInstance, "vkDestroyDebugReportCallbackEXT");
-        if (func == nullptr) {
-            throw std::runtime_error("Could not load vkDestroyDebugReportCallbackEXT");
+        if (func == nullptr)
+        {
+            CV_LOG_FATAL(NULL, "Could not load vkDestroyDebugReportCallbackEXT");
         }
-        func(kInstance, kDebugReportCallback, NULL);
+        else
+        {
+            func(kInstance, kDebugReportCallback, NULL);
+        }
     }
     kShaders.clear();
     vkDestroyInstance(kInstance, NULL);
