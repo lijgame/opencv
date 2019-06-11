@@ -300,10 +300,11 @@ INSTANTIATE_TEST_CASE_P(/**/, Reproducibility_ResNet50,
 typedef testing::TestWithParam<Target> Reproducibility_SqueezeNet_v1_1;
 TEST_P(Reproducibility_SqueezeNet_v1_1, Accuracy)
 {
+    int targetId = GetParam();
+    if(targetId == DNN_TARGET_OPENCL_FP16)
+        throw SkipTestException("This test does not support FP16");
     Net net = readNetFromCaffe(findDataFile("dnn/squeezenet_v1.1.prototxt", false),
                                findDataFile("dnn/squeezenet_v1.1.caffemodel", false));
-
-    int targetId = GetParam();
     net.setPreferableBackend(DNN_BACKEND_OPENCV);
     net.setPreferableTarget(targetId);
 
@@ -324,7 +325,8 @@ TEST_P(Reproducibility_SqueezeNet_v1_1, Accuracy)
     Mat ref = blobFromNPY(_tf("squeezenet_v1.1_prob.npy"));
     normAssert(ref, out);
 }
-INSTANTIATE_TEST_CASE_P(/**/, Reproducibility_SqueezeNet_v1_1, availableDnnTargets());
+INSTANTIATE_TEST_CASE_P(/**/, Reproducibility_SqueezeNet_v1_1,
+    testing::ValuesIn(getAvailableTargets(DNN_BACKEND_OPENCV)));
 
 TEST(Reproducibility_AlexNet_fp16, Accuracy)
 {
@@ -374,6 +376,7 @@ TEST(Reproducibility_GoogLeNet_fp16, Accuracy)
 TEST_P(Test_Caffe_nets, Colorization)
 {
     checkBackend();
+
     Mat inp = blobFromNPY(_tf("colorization_inp.npy"));
     Mat ref = blobFromNPY(_tf("colorization_out.npy"));
     Mat kernel = blobFromNPY(_tf("colorization_pts_in_hull.npy"));
@@ -391,8 +394,12 @@ TEST_P(Test_Caffe_nets, Colorization)
     Mat out = net.forward();
 
     // Reference output values are in range [-29.1, 69.5]
-    const double l1 = (target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD) ? 0.25 : 4e-4;
-    const double lInf = (target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD) ? 5.3 : 3e-3;
+    double l1 = (target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD) ? 0.25 : 4e-4;
+    double lInf = (target == DNN_TARGET_OPENCL_FP16 || target == DNN_TARGET_MYRIAD) ? 5.3 : 3e-3;
+    if (target == DNN_TARGET_MYRIAD && getInferenceEngineVPUType() == CV_DNN_INFERENCE_ENGINE_VPU_TYPE_MYRIAD_X)
+    {
+        l1 = 0.6; lInf = 15;
+    }
     normAssert(out, ref, "", l1, lInf);
 }
 
@@ -421,7 +428,7 @@ TEST_P(Test_Caffe_nets, DenseNet_121)
     }
     else if (target == DNN_TARGET_MYRIAD)
     {
-        l1 = 0.097; lInf = 0.52;
+        l1 = 0.11; lInf = 0.5;
     }
     normAssert(out, ref, "", l1, lInf);
 }
@@ -469,6 +476,7 @@ TEST(Test_Caffe, shared_weights)
 
   net.setInput(blob_1, "input_1");
   net.setInput(blob_2, "input_2");
+  net.setPreferableBackend(DNN_BACKEND_OPENCV);
 
   Mat sum = net.forward();
 
@@ -512,12 +520,14 @@ INSTANTIATE_TEST_CASE_P(Test_Caffe, opencv_face_detector,
 
 TEST_P(Test_Caffe_nets, FasterRCNN_vgg16)
 {
-    if ((backend == DNN_BACKEND_INFERENCE_ENGINE && target == DNN_TARGET_MYRIAD)
-#if defined(INF_ENGINE_RELEASE) && INF_ENGINE_RELEASE > 2018030000
-     || (backend == DNN_BACKEND_INFERENCE_ENGINE && target == DNN_TARGET_OPENCL_FP16)
+#if defined(INF_ENGINE_RELEASE)
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE && (target == DNN_TARGET_OPENCL || target == DNN_TARGET_OPENCL_FP16))
+        throw SkipTestException("Test is disabled for DLIE OpenCL targets");  // very slow
+
+    if (backend == DNN_BACKEND_INFERENCE_ENGINE && target == DNN_TARGET_MYRIAD)
+        throw SkipTestException("Test is disabled for Myriad targets");
 #endif
-    )
-        throw SkipTestException("");
+
     static Mat ref = (Mat_<float>(3, 7) << 0, 2, 0.949398, 99.2454, 210.141, 601.205, 462.849,
                                            0, 7, 0.997022, 481.841, 92.3218, 722.685, 175.953,
                                            0, 12, 0.993028, 133.221, 189.377, 350.994, 563.166);

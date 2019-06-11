@@ -148,10 +148,18 @@ public:
     {
         if (backendId == DNN_BACKEND_INFERENCE_ENGINE)
         {
-            if (preferableTarget == DNN_TARGET_MYRIAD)
+#ifdef HAVE_INF_ENGINE
+            if (preferableTarget == DNN_TARGET_MYRIAD) {
+                if (type == MAX && (pad_l == 1 && pad_t == 1) && stride == Size(2, 2) ) {
+                    return !isMyriadX();
+                }
                 return type == MAX || type == AVE;
+            }
             else
                 return type != STOCHASTIC;
+#else
+            return false;
+#endif
         }
         else
             return backendId == DNN_BACKEND_OPENCV ||
@@ -295,6 +303,48 @@ public:
     virtual Ptr<BackendNode> initInfEngine(const std::vector<Ptr<BackendWrapper> >&) CV_OVERRIDE
     {
 #ifdef HAVE_INF_ENGINE
+#if INF_ENGINE_VER_MAJOR_GE(INF_ENGINE_RELEASE_2018R5)
+        if (type == MAX || type == AVE)
+        {
+            InferenceEngine::Builder::PoolingLayer ieLayer(name);
+            ieLayer.setKernel({(size_t)kernel.height, (size_t)kernel.width});
+            ieLayer.setStrides({(size_t)stride.height, (size_t)stride.width});
+            ieLayer.setPaddingsBegin({(size_t)pad_t, (size_t)pad_l});
+            ieLayer.setPaddingsEnd({(size_t)pad_b, (size_t)pad_r});
+            ieLayer.setPoolingType(type == MAX ?
+                                   InferenceEngine::Builder::PoolingLayer::PoolingType::MAX :
+                                   InferenceEngine::Builder::PoolingLayer::PoolingType::AVG);
+            ieLayer.setRoundingType(ceilMode ?
+                                    InferenceEngine::Builder::PoolingLayer::RoundingType::CEIL :
+                                    InferenceEngine::Builder::PoolingLayer::RoundingType::FLOOR);
+            ieLayer.setExcludePad(type == AVE && padMode == "SAME");
+
+            InferenceEngine::Builder::Layer l = ieLayer;
+            if (!padMode.empty())
+                l.getParameters()["auto_pad"] = padMode == "VALID" ? std::string("valid") : std::string("same_upper");
+            return Ptr<BackendNode>(new InfEngineBackendNode(l));
+        }
+        else if (type == ROI)
+        {
+            InferenceEngine::Builder::ROIPoolingLayer ieLayer(name);
+            ieLayer.setSpatialScale(spatialScale);
+            ieLayer.setPooled({pooledSize.height, pooledSize.width});
+            ieLayer.setInputPorts(std::vector<InferenceEngine::Port>(2));
+            return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
+        }
+        else if (type == PSROI)
+        {
+            InferenceEngine::Builder::PSROIPoolingLayer ieLayer(name);
+            ieLayer.setSpatialScale(spatialScale);
+            ieLayer.setOutputDim(psRoiOutChannels);
+            ieLayer.setGroupSize(pooledSize.width);
+            ieLayer.setInputPorts(std::vector<InferenceEngine::Port>(2));
+            return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
+        }
+        else
+            CV_Error(Error::StsNotImplemented, "Unsupported pooling type");
+        return Ptr<BackendNode>();
+#else
         InferenceEngine::LayerParams lp;
         lp.name = name;
         lp.precision = InferenceEngine::Precision::FP32;
@@ -353,6 +403,7 @@ public:
             CV_Error(Error::StsNotImplemented, "Unsupported pooling type");
 
         return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
+#endif
 #endif  // HAVE_INF_ENGINE
         return Ptr<BackendNode>();
     }
