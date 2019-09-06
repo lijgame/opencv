@@ -1,21 +1,22 @@
 {
-    "cmake.configureSettings":{
-        "TESTS_ENABLED":"OFF",
-        "BUILD_TESTS":"OFF",
-        "BUILD_PERF_TESTS":"OFF",
-        "BUILD_opencv_sfm":"OFF",
-        "OPENMP":"ON",
-        "CMAKE_C_COMPILER":"/usr/bin/gcc-5",
-        "CMAKE_CXX_COMPILER":"/usr/bin/g++-5",
-        "CMAKE_EXPORT_COMPILE_COMMANDS":"ON",
-        "BUILD_EXAMPLES":"ON",
-        "INSTALL_C_EXAMPLES":"ON",
-        "INSTALL_PYTHON_EXAMPLES":"ON",
-        "OPENCV_EXTRA_MODULES_PATH":"${workspaceRoot}/opencv_contrib/modules/",
-        "ENABLE_AVX2":"ON",
-        "ENABLE_SSE42":"ON",
-        "ENABLE_AVX":"ON",
-        "WITH_CUDA":"ON",
-        "WITH_OPENGL":"ON"
-    }  
+    "cmake.configureSettings": {
+        "TESTS_ENABLED": "OFF",
+        "BUILD_TESTS": "OFF",
+        "BUILD_PERF_TESTS": "OFF",
+        "BUILD_opencv_sfm": "OFF",
+        "OPENMP": "ON",
+        "CMAKE_C_COMPILER": "/usr/bin/clang-7",
+        "CMAKE_CXX_COMPILER": "/usr/bin/clang++-7",
+        "CMAKE_LINKER": "/usr/bin/ld.lld",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "BUILD_EXAMPLES": "ON",
+        "INSTALL_C_EXAMPLES": "ON",
+        "INSTALL_PYTHON_EXAMPLES": "ON",
+        "OPENCV_EXTRA_MODULES_PATH": "${workspaceRoot}/opencv_contrib/modules/",
+        "CPU_BASELINE": "AVX2",
+        "WITH_CUDA": "ON",
+        "WITH_OPENGL": "ON",
+        "BUILD_opencv_cudacodec": "OFF",
+        "PYTHON_DEFAULT_EXECUTABLE": "/usr/bin/python3"
+    }
 }
